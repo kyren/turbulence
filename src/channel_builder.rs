@@ -1,14 +1,14 @@
 use crate::{
-        compressed_typed_channel::CompressedTypedChannel,
-        packet_multiplexer::{
-            ChannelStatistics, DuplicateChannel, MuxPacketPool, PacketChannel, PacketMultiplexer,
-        },
-        reliable_bincode_channel::{ReliableBincodeChannel, ReliableTypedChannel},
-        reliable_channel::{self, ReliableChannel},
-        unreliable_bincode_channel::{UnreliableBincodeChannel, UnreliableTypedChannel},
-        unreliable_channel::UnreliableChannel,
+    compressed_typed_channel::CompressedTypedChannel,
+    packet_multiplexer::{
+        ChannelStatistics, DuplicateChannel, MuxPacketPool, PacketChannel, PacketMultiplexer,
+    },
+    reliable_bincode_channel::{ReliableBincodeChannel, ReliableTypedChannel},
+    reliable_channel::{self, ReliableChannel},
     spawn::Spawn,
     timer::Timer,
+    unreliable_bincode_channel::{UnreliableBincodeChannel, UnreliableTypedChannel},
+    unreliable_channel::UnreliableChannel,
 };
 
 /// Helper that allows for easily opening different channel types on a `PacketMultiplexer`.

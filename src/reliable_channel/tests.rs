@@ -4,10 +4,10 @@ use futures::channel::{mpsc, oneshot};
 use rand::{rngs::SmallRng, thread_rng, SeedableRng};
 
 use crate::{
-        packet_multiplexer::MuxPacketPool,
-        reliable_channel::{ReliableChannel, Settings},
-        test_util::{condition_link, LinkCondition, SimpleExecutor, TestTimer},
+    packet_multiplexer::MuxPacketPool,
+    reliable_channel::{ReliableChannel, Settings},
     spawn::Spawn,
+    test_util::{condition_link, LinkCondition, SimpleExecutor, TestTimer},
     timer::Timer,
 };
 

@@ -212,10 +212,10 @@ mod tests {
     use rand::{rngs::SmallRng, thread_rng, RngCore, SeedableRng};
 
     use crate::{
-            packet_multiplexer::MuxPacketPool,
-            reliable_channel::{self, ReliableChannel},
-            test_util::{condition_link, LinkCondition, SimpleExecutor, TestTimer},
+        packet_multiplexer::MuxPacketPool,
+        reliable_channel::{self, ReliableChannel},
         spawn::Spawn,
+        test_util::{condition_link, LinkCondition, SimpleExecutor, TestTimer},
     };
 
     #[test]

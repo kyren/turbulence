@@ -1,7 +1,7 @@
 use std::{
     any::{Any, TypeId},
-    error::Error,
     collections::{hash_map, HashMap, HashSet},
+    error::Error,
 };
 
 use futures::{
@@ -15,8 +15,8 @@ use serde::{de::DeserializeOwned, Serialize};
 use thiserror::Error;
 
 use crate::{
-    event_watch,
     channel_builder::ChannelBuilder,
+    event_watch,
     packet_multiplexer::{ChannelStatistics, MuxPacketPool, PacketChannel, PacketMultiplexer},
     reliable_channel,
     spawn::Spawn,

@@ -107,12 +107,13 @@ impl Timer for TestTimerHandle {
     }
 
     fn interval(&self, duration: Duration) -> Self::Interval {
-        Box::pin(stream::unfold(Arc::clone(&self.0), move |state| {
-            async move {
+        Box::pin(stream::unfold(
+            Arc::clone(&self.0),
+            move |state| async move {
                 let time = do_delay(Arc::clone(&state), duration).await;
                 Some((time, state))
-            }
-        }))
+            },
+        ))
     }
 }
 
