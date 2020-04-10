@@ -30,15 +30,6 @@ impl<T: Init> Pool<T> {
         Pool(Arc::new(SegQueue::new()))
     }
 
-    /// Acquire an item from the pool, or construct a new default one if one is not available.
-    pub fn acquire(&self) -> Pooled<T>
-    where
-        T: Default,
-    {
-        let item = self.0.pop().ok().unwrap_or_default();
-        Pooled(ManuallyDrop::new(item), Arc::downgrade(&self.0))
-    }
-
     pub fn acquire_with<F>(&self, f: F) -> Pooled<T>
     where
         F: FnOnce() -> T,

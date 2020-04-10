@@ -1,18 +1,18 @@
-pub mod buffer;
-pub mod channel_builder;
-pub mod compressed_typed_channel;
-pub mod event_watch;
-pub mod message_channels;
-pub mod packet;
-pub mod packet_multiplexer;
-pub mod pool;
-pub mod reliable_bincode_channel;
-pub mod reliable_channel;
+mod buffer;
+mod channel_builder;
+mod compressed_typed_channel;
+mod event_watch;
+mod message_channels;
+mod packet;
+mod packet_multiplexer;
+mod pool;
+mod reliable_bincode_channel;
+mod reliable_channel;
 pub mod spawn;
 pub mod timer;
-pub mod unreliable_bincode_channel;
-pub mod unreliable_channel;
-pub mod wrap_cmp;
+mod unreliable_bincode_channel;
+mod unreliable_channel;
+mod wrap_cmp;
 
 #[cfg(test)]
 mod test_util;
