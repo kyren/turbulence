@@ -7,3 +7,4 @@ license = "MIT OR CC-0"
 
 [dependencies]
 futures = "0.3"
+thiserror = "1.0"

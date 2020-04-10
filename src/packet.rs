@@ -3,7 +3,9 @@ use std::ops::{Deref, DerefMut};
 /// Trait for packet buffer allocation and pooling.
 ///
 /// All packet buffers that are allocated from `turbulence` are allocated through this interface.
-/// Buffers must deref to a `&mut [u8]` of length `PACKET_LEN`.
+///
+/// Buffers must deref to a `&mut [u8]` and should all have the same length: the MTU for whatever
+/// the underlying transport is.
 pub trait BufferPool {
     type Buffer: Deref<Target = [u8]> + DerefMut;
 
@@ -13,11 +15,13 @@ pub trait BufferPool {
 #[derive(Clone, Debug, Default)]
 pub struct PacketPool<B>(B);
 
-impl<B: BufferPool> PacketPool<B> {
+impl<B> PacketPool<B> {
     pub fn new(buffer_pool: B) -> Self {
         PacketPool(buffer_pool)
     }
+}
 
+impl<B: BufferPool> PacketPool<B> {
     pub fn acquire(&self) -> Packet<B::Buffer> {
         Packet {
             buffer: self.0.acquire(),
@@ -26,12 +30,16 @@ impl<B: BufferPool> PacketPool<B> {
     }
 }
 
+#[derive(Debug)]
 pub struct Packet<B> {
     buffer: B,
     len: usize,
 }
 
-impl<B: Deref<Target = [u8]> + DerefMut> Packet<B> {
+impl<B> Packet<B>
+where
+    B: Deref<Target = [u8]> + DerefMut,
+{
     /// Static capacity of this packet
     pub fn capacity(&self) -> usize {
         self.buffer.len()
