@@ -1,5 +1,5 @@
 use std::{
-    any::{Any, TypeId},
+    any::{type_name, Any, TypeId},
     collections::{hash_map, HashMap, HashSet},
     error::Error,
 };
@@ -64,7 +64,7 @@ pub struct MessageChannelsBuilder<S, T> {
     spawner: S,
     timer: T,
     channels: HashSet<PacketChannel>,
-    register_fns: HashMap<TypeId, (MessageChannelSettings, RegisterFn<S, T>)>,
+    register_fns: HashMap<TypeId, (&'static str, MessageChannelSettings, RegisterFn<S, T>)>,
 }
 
 impl<S, T> MessageChannelsBuilder<S, T> {
@@ -100,7 +100,7 @@ where
         match self.register_fns.entry(TypeId::of::<M>()) {
             hash_map::Entry::Occupied(_) => Err(ChannelAlreadyRegistered::MessageType),
             hash_map::Entry::Vacant(vacant) => {
-                vacant.insert((settings, register_message_type::<S, T, M>));
+                vacant.insert((type_name::<M>(), settings, register_message_type::<S, T, M>));
                 Ok(())
             }
         }
@@ -111,28 +111,27 @@ where
     pub fn build(self, multiplexer: &mut PacketMultiplexer) -> MessageChannels {
         let mut channel_builder = ChannelBuilder::new(self.pool, self.spawner, self.timer.clone());
         let mut channels_map = ChannelsMap::default();
-        let mut tasks = HashMap::new();
-        for (type_id, (settings, register_fn)) in self.register_fns {
-            let channel_task = register_fn(
-                settings,
-                multiplexer,
-                &mut channel_builder,
-                &mut channels_map,
-            );
-            tasks.insert(type_id, channel_task);
-        }
-
-        let mut tasks: FuturesUnordered<_> = tasks
+        let mut tasks: FuturesUnordered<_> = self
+            .register_fns
             .into_iter()
-            .map(|(type_id, task)| task.map_err(move |e| (type_id, e)))
+            .map(|(_, (type_name, settings, register_fn))| {
+                register_fn(
+                    settings,
+                    multiplexer,
+                    &mut channel_builder,
+                    &mut channels_map,
+                )
+                .map_err(move |e| (type_name, e))
+            })
             .collect();
+
         channel_builder.spawner.spawn({
             async move {
                 if let Some(res) = tasks.next().await {
-                    let (type_id, err) = res.unwrap_err();
+                    let (type_name, err) = res.unwrap_err();
                     log::warn!(
                         "network receiver task for message type {:?} has errored: {}",
-                        type_id,
+                        type_name,
                         err
                     );
                 }
