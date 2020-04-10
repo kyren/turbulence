@@ -2,14 +2,15 @@ mod buffer;
 mod channel_builder;
 mod compressed_typed_channel;
 mod event_watch;
+pub mod link_condition;
 mod message_channels;
 mod packet;
 mod packet_multiplexer;
 mod pool;
 mod reliable_bincode_channel;
 mod reliable_channel;
-pub mod spawn;
-pub mod timer;
+mod spawn;
+mod timer;
 mod unreliable_bincode_channel;
 mod unreliable_channel;
 mod wrap_cmp;
@@ -30,6 +31,8 @@ pub use self::{
     },
     reliable_bincode_channel::{ReliableBincodeChannel, ReliableTypedChannel},
     reliable_channel::ReliableChannel,
+    spawn::Spawn,
+    timer::Timer,
     unreliable_bincode_channel::{UnreliableBincodeChannel, UnreliableTypedChannel},
     unreliable_channel::UnreliableChannel,
 };
