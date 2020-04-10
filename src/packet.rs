@@ -5,7 +5,7 @@ use std::ops::{Deref, DerefMut};
 /// All packet buffers that are allocated from `turbulence` are allocated through this interface.
 ///
 /// Buffers must deref to a `&mut [u8]` and should all have the same length: the MTU for whatever
-/// the underlying transport is.
+/// the underlying transport is, up to 32k in size.
 pub trait BufferPool {
     type Buffer: Deref<Target = [u8]> + DerefMut;
 
@@ -13,16 +13,16 @@ pub trait BufferPool {
 }
 
 #[derive(Clone, Debug, Default)]
-pub struct PacketPool<B>(B);
+pub struct PacketPool<P>(P);
 
-impl<B> PacketPool<B> {
-    pub fn new(buffer_pool: B) -> Self {
+impl<P> PacketPool<P> {
+    pub fn new(buffer_pool: P) -> Self {
         PacketPool(buffer_pool)
     }
 }
 
-impl<B: BufferPool> PacketPool<B> {
-    pub fn acquire(&self) -> Packet<B::Buffer> {
+impl<P: BufferPool> PacketPool<P> {
+    pub fn acquire(&self) -> Packet<P::Buffer> {
         Packet {
             buffer: self.0.acquire(),
             len: 0,
@@ -66,6 +66,7 @@ where
     pub fn extend(&mut self, other: &[u8]) {
         assert!(self.len + other.len() <= self.capacity());
         self.buffer[self.len..self.len + other.len()].copy_from_slice(other);
+        self.len += other.len();
     }
 
     pub fn as_slice(&self) -> &[u8] {

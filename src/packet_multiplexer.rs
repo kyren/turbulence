@@ -80,24 +80,24 @@ where
 }
 
 #[derive(Clone, Debug)]
-pub struct MuxPacketPool<B>(PacketPool<B>);
+pub struct MuxPacketPool<P>(PacketPool<P>);
 
-impl<B> MuxPacketPool<B> {
-    pub fn new(buffer_pool: B) -> Self {
+impl<P> MuxPacketPool<P> {
+    pub fn new(buffer_pool: P) -> Self {
         MuxPacketPool(PacketPool::new(buffer_pool))
     }
 }
 
-impl<B: BufferPool> MuxPacketPool<B> {
-    pub fn acquire(&self) -> MuxPacket<B::Buffer> {
+impl<P: BufferPool> MuxPacketPool<P> {
+    pub fn acquire(&self) -> MuxPacket<P::Buffer> {
         let mut packet = self.0.acquire();
         packet.resize(1, 0);
         MuxPacket(packet)
     }
 }
 
-impl<B> From<PacketPool<B>> for MuxPacketPool<B> {
-    fn from(pool: PacketPool<B>) -> MuxPacketPool<B> {
+impl<P> From<PacketPool<P>> for MuxPacketPool<P> {
+    fn from(pool: PacketPool<P>) -> MuxPacketPool<P> {
         MuxPacketPool(pool)
     }
 }
