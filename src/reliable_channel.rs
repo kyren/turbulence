@@ -66,6 +66,7 @@ pub struct Settings {
     pub rtt_resend_factor: f64,
 }
 
+/// Turns a stream of unreliable, unordered packets into a reliable in-order stream of data.
 pub struct ReliableChannel {
     shared: Arc<Mutex<Shared>>,
     task_error: Fuse<oneshot::Receiver<Error>>,
