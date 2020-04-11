@@ -64,8 +64,8 @@ fn test_reliable_bincode_channel() {
     let mut stream1 = ReliableBincodeChannel::new(
         ReliableChannel::new(
             runtime.handle(),
-            SETTINGS.clone(),
             packet_pool.clone(),
+            SETTINGS.clone(),
             arecv,
             bsend,
         ),
@@ -74,8 +74,8 @@ fn test_reliable_bincode_channel() {
     let mut stream2 = ReliableBincodeChannel::new(
         ReliableChannel::new(
             runtime.handle(),
-            SETTINGS.clone(),
             packet_pool.clone(),
+            SETTINGS.clone(),
             brecv,
             asend,
         ),

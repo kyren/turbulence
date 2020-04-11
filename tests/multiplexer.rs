@@ -7,7 +7,7 @@ use futures::{
 
 use turbulence::{
     buffer::BufferPacketPool,
-    packet::Packet,
+    packet::{Packet, PacketPool},
     packet_multiplexer::{MuxPacketPool, PacketMultiplexer},
 };
 

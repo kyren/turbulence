@@ -62,15 +62,15 @@ fn test_reliable_stream() {
 
     let mut stream1 = ReliableChannel::new(
         runtime.handle(),
-        SETTINGS.clone(),
         packet_pool.clone(),
+        SETTINGS.clone(),
         arecv,
         bsend,
     );
     let mut stream2 = ReliableChannel::new(
         runtime.handle(),
-        SETTINGS.clone(),
         packet_pool.clone(),
+        SETTINGS.clone(),
         brecv,
         asend,
     );

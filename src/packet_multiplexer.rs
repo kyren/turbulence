@@ -68,8 +68,13 @@ impl<P> MuxPacketPool<P> {
     }
 }
 
-impl<P: PacketPool> MuxPacketPool<P> {
-    pub fn acquire(&self) -> MuxPacket<P::Packet> {
+impl<P> PacketPool for MuxPacketPool<P>
+where
+    P: PacketPool,
+{
+    type Packet = MuxPacket<P::Packet>;
+
+    fn acquire(&self) -> MuxPacket<P::Packet> {
         let mut packet = self.0.acquire();
         packet.resize(1, 0);
         MuxPacket(packet)
@@ -113,6 +118,9 @@ impl ChannelStatistics {
 
 /// Routes packets marked with a channel header from a single `Sink` / `Stream` pair to a set of
 /// `Sink` / `Stream` pairs for each channel.
+///
+/// Also monitors bandwidth on each channel independently, and returns a `ChannelStatistics` handle
+/// to query bandwidth totals for that specific channel.
 pub struct PacketMultiplexer<P> {
     incoming: HashMap<PacketChannel, ChannelSender<P>>,
     outgoing: SelectAll<ChannelReceiver<P>>,

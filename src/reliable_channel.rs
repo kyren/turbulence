@@ -74,8 +74,8 @@ pub struct ReliableChannel {
 impl ReliableChannel {
     pub fn new<R, P>(
         runtime: R,
-        settings: Settings,
         packet_pool: P,
+        settings: Settings,
         incoming: mpsc::Receiver<P::Packet>,
         outgoing: mpsc::Sender<P::Packet>,
     ) -> Self

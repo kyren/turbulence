@@ -64,8 +64,8 @@ fn test_compressed_typed_channel() {
     let mut stream1 = CompressedTypedChannel::<Vec<u8>>::new(
         ReliableChannel::new(
             runtime.handle(),
-            SETTINGS.clone(),
             packet_pool.clone(),
+            SETTINGS.clone(),
             arecv,
             bsend,
         ),
@@ -74,8 +74,8 @@ fn test_compressed_typed_channel() {
     let mut stream2 = CompressedTypedChannel::<Vec<u8>>::new(
         ReliableChannel::new(
             runtime.handle(),
-            SETTINGS.clone(),
             packet_pool.clone(),
+            SETTINGS.clone(),
             brecv,
             asend,
         ),
