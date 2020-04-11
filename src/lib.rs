@@ -1,4 +1,5 @@
 pub mod buffer;
+pub mod compressed_typed_channel;
 pub mod packet;
 pub mod packet_multiplexer;
 pub mod reliable_bincode_channel;
