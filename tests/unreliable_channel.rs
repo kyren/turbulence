@@ -7,7 +7,7 @@ mod util;
 use self::util::SimpleBufferPool;
 
 #[test]
-fn test_unreliable_messages() {
+fn test_unreliable_channel() {
     let packet_pool = MuxPacketPool::new(SimpleBufferPool(1200));
     let mut pool = LocalPool::new();
     let spawner = pool.spawner();
