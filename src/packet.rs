@@ -1,11 +1,17 @@
 use std::ops::{Deref, DerefMut};
 
+/// The maximum usable packet size by `turbulence`.
+///
+/// It is not useful for a `BufferPool` to return buffers larger than this, only the first
+/// `MAX_PACKET_LEN` bytes will be used.
+pub const MAX_PACKET_LEN: usize = 32768;
+
 /// Trait for packet buffer allocation and pooling.
 ///
 /// All packet buffers that are allocated from `turbulence` are allocated through this interface.
 ///
 /// Buffers must deref to a `&mut [u8]` and should all have the same length: the MTU for whatever
-/// the underlying transport is, up to 32k in size.
+/// the underlying transport is, up to `MAX_PACKET_LEN` in size.
 pub trait BufferPool {
     type Buffer: Deref<Target = [u8]> + DerefMut;
 
@@ -42,7 +48,7 @@ where
 {
     /// Static capacity of this packet
     pub fn capacity(&self) -> usize {
-        self.buffer.len()
+        self.buffer.len().min(MAX_PACKET_LEN)
     }
 
     pub fn clear(&mut self) {

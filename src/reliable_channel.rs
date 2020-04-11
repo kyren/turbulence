@@ -361,15 +361,16 @@ where
             return Ok(());
         }
 
-        let send_amt = (shared.send_window.send_available()).min(self.remote_recv_available);
+        let send_amt = (shared.send_window.send_available())
+            .min(self.remote_recv_available)
+            .min(i16::MAX as u32);
+
         if send_amt == 0 {
             return Ok(());
         }
 
         let mut packet = self.packet_pool.acquire();
-        let send_amt = (packet.capacity() - 6)
-            .min(send_amt as usize)
-            .min(i16::MAX as usize) as u32;
+        let send_amt = send_amt.min((packet.capacity() - 6) as u32);
 
         packet.resize(6 + send_amt as usize, 0);
 

@@ -8,15 +8,19 @@ use futures::{
 use thiserror::Error;
 
 use crate::{
-    packet::BufferPool,
+    packet::{BufferPool, MAX_PACKET_LEN},
     packet_multiplexer::{MuxPacket, MuxPacketPool},
 };
+
+/// The maximum possible message length of an `UnreliableChannel` message, based on the
+/// `MAX_PACKET_LEN`.
+pub const MAX_MESSAGE_LEN: usize = MAX_PACKET_LEN - 2;
 
 #[derive(Debug, Error)]
 pub enum SendError {
     #[error("outgoing packet stream has been disconnected")]
     Disconnected,
-    #[error("message length is larger than the largest supported")]
+    #[error("message length is larger than the maximum packet size")]
     TooBig,
 }
 
@@ -61,7 +65,7 @@ where
         }
     }
 
-    /// Write the given message, which must be less than `MAX_MESSAGE_LEN` in size.
+    /// Write the given message to the channel.
     ///
     /// Messages are coalesced into larger packets before being sent, so in order to guarantee that
     /// the message is actually sent, you must call `flush`.
