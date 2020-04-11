@@ -1,3 +1,4 @@
+pub mod buffer;
 pub mod packet;
 pub mod packet_multiplexer;
 pub mod reliable_bincode_channel;

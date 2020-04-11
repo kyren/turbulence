@@ -1,9 +1,7 @@
 use futures::{channel::mpsc, executor::LocalPool, task::SpawnExt};
 use serde::{Deserialize, Serialize};
 
-use turbulence::{
-    packet_multiplexer::MuxPacketPool, unreliable_bincode_channel::UnreliableTypedChannel,
-};
+use turbulence::{buffer::BufferPacketPool, unreliable_bincode_channel::UnreliableTypedChannel};
 
 mod util;
 
@@ -11,7 +9,7 @@ use self::util::SimpleBufferPool;
 
 #[test]
 fn test_unreliable_bincode_channel() {
-    let packet_pool = MuxPacketPool::new(SimpleBufferPool(1200));
+    let packet_pool = BufferPacketPool::new(SimpleBufferPool(1200));
     let mut pool = LocalPool::new();
     let spawner = pool.spawner();
 
@@ -28,7 +26,11 @@ fn test_unreliable_bincode_channel() {
         c: u8,
     }
 
-    async fn send(stream: &mut UnreliableTypedChannel<MyMsg, SimpleBufferPool>, val: u8, len: u8) {
+    async fn send(
+        stream: &mut UnreliableTypedChannel<MyMsg, BufferPacketPool<SimpleBufferPool>>,
+        val: u8,
+        len: u8,
+    ) {
         for i in 0..len {
             stream
                 .send(&MyMsg {
@@ -42,7 +44,11 @@ fn test_unreliable_bincode_channel() {
         stream.flush().await.unwrap();
     }
 
-    async fn recv(stream: &mut UnreliableTypedChannel<MyMsg, SimpleBufferPool>, val: u8, len: u8) {
+    async fn recv(
+        stream: &mut UnreliableTypedChannel<MyMsg, BufferPacketPool<SimpleBufferPool>>,
+        val: u8,
+        len: u8,
+    ) {
         for i in 0..len {
             assert_eq!(
                 stream.recv().await.unwrap(),

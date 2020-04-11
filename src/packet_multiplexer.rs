@@ -18,50 +18,30 @@ use futures::{
 };
 use thiserror::Error;
 
-use crate::packet::{BufferPool, Packet, PacketPool};
+use crate::packet::{Packet, PacketPool};
 
 pub type PacketChannel = u8;
 
 /// A wrapper over a `Packet` that reserves the first byte for the channel.
 #[derive(Debug)]
-pub struct MuxPacket<B>(Packet<B>);
+pub struct MuxPacket<P>(P);
 
-impl<B> MuxPacket<B>
+impl<P> Packet for MuxPacket<P>
 where
-    B: Deref<Target = [u8]> + DerefMut,
+    P: Packet,
 {
-    pub fn capacity(&self) -> usize {
+    fn capacity(&self) -> usize {
         self.0.capacity() - 1
     }
 
-    pub fn clear(&mut self) {
-        self.0.truncate(1);
-    }
-
-    pub fn resize(&mut self, len: usize, val: u8) {
+    fn resize(&mut self, len: usize, val: u8) {
         self.0.resize(len + 1, val);
-    }
-
-    pub fn truncate(&mut self, len: usize) {
-        self.0.truncate(len + 1);
-    }
-
-    pub fn extend(&mut self, other: &[u8]) {
-        self.0.extend(other);
-    }
-
-    pub fn as_slice(&self) -> &[u8] {
-        self.0.as_slice()
-    }
-
-    pub fn as_mut_slice(&mut self) -> &mut [u8] {
-        self.0.as_mut_slice()
     }
 }
 
-impl<B> Deref for MuxPacket<B>
+impl<P> Deref for MuxPacket<P>
 where
-    B: Deref<Target = [u8]>,
+    P: Packet,
 {
     type Target = [u8];
 
@@ -70,9 +50,9 @@ where
     }
 }
 
-impl<B> DerefMut for MuxPacket<B>
+impl<P> DerefMut for MuxPacket<P>
 where
-    B: Deref<Target = [u8]> + DerefMut,
+    P: Packet,
 {
     fn deref_mut(&mut self) -> &mut [u8] {
         &mut self.0[1..]
@@ -80,24 +60,24 @@ where
 }
 
 #[derive(Clone, Debug)]
-pub struct MuxPacketPool<P>(PacketPool<P>);
+pub struct MuxPacketPool<P>(P);
 
 impl<P> MuxPacketPool<P> {
-    pub fn new(buffer_pool: P) -> Self {
-        MuxPacketPool(PacketPool::new(buffer_pool))
+    pub fn new(packet_pool: P) -> Self {
+        MuxPacketPool(packet_pool)
     }
 }
 
-impl<P: BufferPool> MuxPacketPool<P> {
-    pub fn acquire(&self) -> MuxPacket<P::Buffer> {
+impl<P: PacketPool> MuxPacketPool<P> {
+    pub fn acquire(&self) -> MuxPacket<P::Packet> {
         let mut packet = self.0.acquire();
         packet.resize(1, 0);
         MuxPacket(packet)
     }
 }
 
-impl<P> From<PacketPool<P>> for MuxPacketPool<P> {
-    fn from(pool: PacketPool<P>) -> MuxPacketPool<P> {
+impl<P> From<P> for MuxPacketPool<P> {
+    fn from(pool: P) -> MuxPacketPool<P> {
         MuxPacketPool(pool)
     }
 }
@@ -133,16 +113,16 @@ impl ChannelStatistics {
 
 /// Routes packets marked with a channel header from a single `Sink` / `Stream` pair to a set of
 /// `Sink` / `Stream` pairs for each channel.
-pub struct PacketMultiplexer<B> {
-    incoming: HashMap<PacketChannel, ChannelSender<B>>,
-    outgoing: SelectAll<ChannelReceiver<B>>,
+pub struct PacketMultiplexer<P> {
+    incoming: HashMap<PacketChannel, ChannelSender<P>>,
+    outgoing: SelectAll<ChannelReceiver<P>>,
 }
 
-impl<B> PacketMultiplexer<B>
+impl<P> PacketMultiplexer<P>
 where
-    B: Deref<Target = [u8]> + DerefMut + Unpin,
+    P: Packet + Unpin,
 {
-    pub fn new() -> PacketMultiplexer<B> {
+    pub fn new() -> PacketMultiplexer<P> {
         PacketMultiplexer {
             incoming: HashMap::new(),
             outgoing: SelectAll::new(),
@@ -160,8 +140,8 @@ where
         buffer_size: usize,
     ) -> Result<
         (
-            Sender<MuxPacket<B>>,
-            Receiver<MuxPacket<B>>,
+            Sender<MuxPacket<P>>,
+            Receiver<MuxPacket<P>>,
             ChannelStatistics,
         ),
         DuplicateChannel,
@@ -194,7 +174,7 @@ where
     ///
     /// Returns an `IncomingMultiplexedPackets` which is a `Sink` for incoming packets, and an
     /// `OutgoingMultiplexedPackets` which is a `Stream` for outgoing packets.
-    pub fn start(self) -> (IncomingMultiplexedPackets<B>, OutgoingMultiplexedPackets<B>) {
+    pub fn start(self) -> (IncomingMultiplexedPackets<P>, OutgoingMultiplexedPackets<P>) {
         (
             IncomingMultiplexedPackets {
                 incoming: self.incoming,
@@ -217,14 +197,14 @@ pub enum IncomingError {
 }
 
 #[derive(Error)]
-pub enum IncomingTrySendError<B> {
+pub enum IncomingTrySendError<P> {
     #[error("packet channel is full")]
-    IsFull(Packet<B>),
+    IsFull(P),
     #[error(transparent)]
     Error(#[from] IncomingError),
 }
 
-impl<B> fmt::Debug for IncomingTrySendError<B> {
+impl<P> fmt::Debug for IncomingTrySendError<P> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             IncomingTrySendError::IsFull(_) => write!(f, "IncomingTrySendError::IsFull"),
@@ -236,7 +216,7 @@ impl<B> fmt::Debug for IncomingTrySendError<B> {
     }
 }
 
-impl<B> IncomingTrySendError<B> {
+impl<P> IncomingTrySendError<P> {
     pub fn is_full(&self) -> bool {
         match self {
             IncomingTrySendError::IsFull(_) => true,
@@ -245,21 +225,21 @@ impl<B> IncomingTrySendError<B> {
     }
 }
 
-pub struct IncomingMultiplexedPackets<B> {
-    incoming: HashMap<PacketChannel, ChannelSender<B>>,
-    to_send: Option<Packet<B>>,
+pub struct IncomingMultiplexedPackets<P> {
+    incoming: HashMap<PacketChannel, ChannelSender<P>>,
+    to_send: Option<P>,
     to_flush: HashSet<PacketChannel>,
 }
 
-impl<B> IncomingMultiplexedPackets<B>
+impl<P> IncomingMultiplexedPackets<P>
 where
-    B: Deref<Target = [u8]> + Unpin,
+    P: Packet + Unpin,
 {
     /// Attempt to send the given packet to the appropriate multiplexed channel.
     ///
     /// If a normal error occurs, returns `IncomingError::Error`, if the destination channel buffer
     /// is full, returns `IncomingTrySendError::IsFull`.
-    pub fn try_send(&mut self, packet: Packet<B>) -> Result<(), IncomingTrySendError<B>> {
+    pub fn try_send(&mut self, packet: P) -> Result<(), IncomingTrySendError<P>> {
         let channel = packet[0];
         let incoming = self
             .incoming
@@ -280,9 +260,9 @@ where
     }
 }
 
-impl<B> Sink<Packet<B>> for IncomingMultiplexedPackets<B>
+impl<P> Sink<P> for IncomingMultiplexedPackets<P>
 where
-    B: Deref<Target = [u8]> + Unpin,
+    P: Packet + Unpin,
 {
     type Error = IncomingError;
 
@@ -315,7 +295,7 @@ where
         }
     }
 
-    fn start_send(mut self: Pin<&mut Self>, item: Packet<B>) -> Result<(), Self::Error> {
+    fn start_send(mut self: Pin<&mut Self>, item: P) -> Result<(), Self::Error> {
         assert!(self.to_send.is_none());
         self.to_send = Some(item);
         Ok(())
@@ -350,37 +330,37 @@ where
     }
 }
 
-pub struct OutgoingMultiplexedPackets<B> {
-    outgoing: SelectAll<ChannelReceiver<B>>,
+pub struct OutgoingMultiplexedPackets<P> {
+    outgoing: SelectAll<ChannelReceiver<P>>,
 }
 
-impl<B> Stream for OutgoingMultiplexedPackets<B>
+impl<P> Stream for OutgoingMultiplexedPackets<P>
 where
-    B: Deref<Target = [u8]> + DerefMut + Unpin,
+    P: Packet + Unpin,
 {
-    type Item = Packet<B>;
+    type Item = P;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         Pin::new(&mut self.outgoing).poll_next(cx)
     }
 }
 
-struct ChannelSender<B> {
-    sender: Sender<MuxPacket<B>>,
+struct ChannelSender<P> {
+    sender: Sender<MuxPacket<P>>,
     statistics: Arc<ChannelStatisticsData>,
 }
 
-struct ChannelReceiver<B> {
+struct ChannelReceiver<P> {
     channel: PacketChannel,
-    receiver: Receiver<MuxPacket<B>>,
+    receiver: Receiver<MuxPacket<P>>,
     statistics: Arc<ChannelStatisticsData>,
 }
 
-impl<B> Stream for ChannelReceiver<B>
+impl<P> Stream for ChannelReceiver<P>
 where
-    B: Deref<Target = [u8]> + DerefMut + Unpin,
+    P: Packet + Unpin,
 {
-    type Item = Packet<B>;
+    type Item = P;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         match Pin::new(&mut self.receiver).poll_next(cx) {

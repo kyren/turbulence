@@ -20,8 +20,7 @@ use futures::{
 use thiserror::Error;
 
 use crate::{
-    packet::BufferPool,
-    packet_multiplexer::{MuxPacket, MuxPacketPool},
+    packet::{Packet, PacketPool},
     runtime::Runtime,
     windows::{stream_gt, AckResult, RecvWindow, SendWindow, StreamPos},
 };
@@ -76,14 +75,14 @@ impl ReliableChannel {
     pub fn new<R, P>(
         runtime: R,
         settings: Settings,
-        packet_pool: MuxPacketPool<P>,
-        incoming: mpsc::Receiver<MuxPacket<P::Buffer>>,
-        outgoing: mpsc::Sender<MuxPacket<P::Buffer>>,
+        packet_pool: P,
+        incoming: mpsc::Receiver<P::Packet>,
+        outgoing: mpsc::Sender<P::Packet>,
     ) -> Self
     where
         R: Runtime + 'static,
-        P: BufferPool + Send + 'static,
-        P::Buffer: Send,
+        P: PacketPool + Send + 'static,
+        P::Packet: Send,
     {
         assert!(settings.bandwidth != 0);
         assert!(settings.recv_window_size != 0);
@@ -242,13 +241,13 @@ struct UnackedRange<I> {
 struct Task<R, P>
 where
     R: Runtime,
-    P: BufferPool,
+    P: PacketPool,
 {
     runtime: R,
     settings: Settings,
-    packet_pool: MuxPacketPool<P>,
-    incoming: mpsc::Receiver<MuxPacket<P::Buffer>>,
-    outgoing: mpsc::Sender<MuxPacket<P::Buffer>>,
+    packet_pool: P,
+    incoming: mpsc::Receiver<P::Packet>,
+    outgoing: mpsc::Sender<P::Packet>,
 
     wakeup_timer: R::Interval,
     remote_recv_available: u32,
@@ -260,13 +259,13 @@ where
 impl<R, P> Task<R, P>
 where
     R: Runtime,
-    P: BufferPool,
+    P: PacketPool,
 {
     async fn main_loop(mut self, shared: Arc<Mutex<Shared>>) -> Result<(), Error> {
         loop {
-            enum WakeReason<'a, B> {
+            enum WakeReason<'a, P> {
                 WakeupTimer,
-                IncomingPacket(MuxPacket<B>),
+                IncomingPacket(P),
                 SendAvailable(MutexGuard<'a, Shared>),
             }
 
@@ -443,11 +442,7 @@ where
 
     // Receive the given packet and respond with an acknowledgment packet, ignoring bandwidth
     // limits.
-    async fn recv_packet(
-        &mut self,
-        shared: &mut Shared,
-        packet: MuxPacket<P::Buffer>,
-    ) -> Result<(), Error> {
+    async fn recv_packet(&mut self, shared: &mut Shared, packet: P::Packet) -> Result<(), Error> {
         if packet.len() < 2 {
             return Err(Error::ProtocolError);
         }

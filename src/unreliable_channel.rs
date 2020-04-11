@@ -7,10 +7,7 @@ use futures::{
 };
 use thiserror::Error;
 
-use crate::{
-    packet::{BufferPool, MAX_PACKET_LEN},
-    packet_multiplexer::{MuxPacket, MuxPacketPool},
-};
+use crate::packet::{Packet, PacketPool, MAX_PACKET_LEN};
 
 /// The maximum possible message length of an `UnreliableChannel` message, based on the
 /// `MAX_PACKET_LEN`.
@@ -37,24 +34,20 @@ pub enum RecvError {
 /// Turns a stream of unreliable, unordered packets into a stream of unreliable, unordered messages.
 pub struct UnreliableChannel<P>
 where
-    P: BufferPool,
+    P: PacketPool,
 {
-    packet_pool: MuxPacketPool<P>,
-    incoming_packets: Receiver<MuxPacket<P::Buffer>>,
-    outgoing_packets: Sender<MuxPacket<P::Buffer>>,
-    out_packet: MuxPacket<P::Buffer>,
-    in_packet: Option<(MuxPacket<P::Buffer>, usize)>,
+    packet_pool: P,
+    incoming_packets: Receiver<P::Packet>,
+    outgoing_packets: Sender<P::Packet>,
+    out_packet: P::Packet,
+    in_packet: Option<(P::Packet, usize)>,
 }
 
 impl<P> UnreliableChannel<P>
 where
-    P: BufferPool,
+    P: PacketPool,
 {
-    pub fn new(
-        packet_pool: MuxPacketPool<P>,
-        incoming: Receiver<MuxPacket<P::Buffer>>,
-        outgoing: Sender<MuxPacket<P::Buffer>>,
-    ) -> Self {
+    pub fn new(packet_pool: P, incoming: Receiver<P::Packet>, outgoing: Sender<P::Packet>) -> Self {
         let out_packet = packet_pool.acquire();
         UnreliableChannel {
             packet_pool,

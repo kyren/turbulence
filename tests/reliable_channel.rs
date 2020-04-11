@@ -4,7 +4,7 @@ use futures::channel::{mpsc, oneshot};
 use rand::{rngs::SmallRng, thread_rng, SeedableRng};
 
 use turbulence::{
-    packet_multiplexer::MuxPacketPool,
+    buffer::BufferPacketPool,
     reliable_channel::{ReliableChannel, Settings},
     runtime::Runtime,
 };
@@ -35,7 +35,7 @@ fn test_reliable_stream() {
         jitter: Duration::from_millis(20),
     };
 
-    let packet_pool = MuxPacketPool::new(SimpleBufferPool(1000));
+    let packet_pool = BufferPacketPool::new(SimpleBufferPool(1000));
     let mut runtime = SimpleRuntime::new();
 
     let (asend, acondrecv) = mpsc::channel(2);

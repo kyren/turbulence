@@ -5,7 +5,11 @@ use futures::{
     SinkExt, StreamExt,
 };
 
-use turbulence::packet_multiplexer::{MuxPacketPool, PacketMultiplexer};
+use turbulence::{
+    buffer::BufferPacketPool,
+    packet::Packet,
+    packet_multiplexer::{MuxPacketPool, PacketMultiplexer},
+};
 
 mod util;
 
@@ -15,7 +19,7 @@ use self::util::SimpleBufferPool;
 fn test_multiplexer() {
     let mut pool = LocalPool::new();
     let spawner = pool.spawner();
-    let packet_pool = MuxPacketPool::new(SimpleBufferPool(32));
+    let packet_pool = MuxPacketPool::new(BufferPacketPool::new(SimpleBufferPool(32)));
 
     let mut multiplexer_a = PacketMultiplexer::new();
     let (mut sender4a, mut receiver4a, _) = multiplexer_a.open_channel(4, 8).unwrap();

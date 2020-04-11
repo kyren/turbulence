@@ -19,7 +19,8 @@ use futures::{
 use rand::Rng;
 
 use turbulence::{
-    packet::BufferPool,
+    buffer::BufferPool,
+    packet::{Packet, PacketPool},
     packet_multiplexer::{MuxPacket, MuxPacketPool},
     runtime::Runtime,
 };
@@ -194,13 +195,13 @@ pub struct LinkCondition {
 pub fn condition_link<P>(
     condition: LinkCondition,
     runtime: impl Runtime + Clone + Send + 'static,
-    pool: MuxPacketPool<P>,
+    pool: P,
     mut rng: impl Rng + Send + 'static,
-    mut incoming: mpsc::Receiver<MuxPacket<P::Buffer>>,
-    outgoing: mpsc::Sender<MuxPacket<P::Buffer>>,
+    mut incoming: mpsc::Receiver<P::Packet>,
+    outgoing: mpsc::Sender<P::Packet>,
 ) where
-    P: BufferPool + Send + 'static,
-    P::Buffer: Send,
+    P: PacketPool + Send + 'static,
+    P::Packet: Send,
 {
     runtime.spawn({
         let runtime = runtime.clone();

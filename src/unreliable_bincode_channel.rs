@@ -5,8 +5,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{
-    packet::BufferPool,
-    packet_multiplexer::{MuxPacket, MuxPacketPool},
+    packet::PacketPool,
     unreliable_channel::{self, UnreliableChannel, MAX_MESSAGE_LEN},
 };
 
@@ -35,7 +34,7 @@ pub enum RecvError {
 /// to arrive in order.
 pub struct UnreliableBincodeChannel<P>
 where
-    P: BufferPool,
+    P: PacketPool,
 {
     channel: UnreliableChannel<P>,
     buffer: Vec<u8>,
@@ -44,13 +43,9 @@ where
 
 impl<P> UnreliableBincodeChannel<P>
 where
-    P: BufferPool,
+    P: PacketPool,
 {
-    pub fn new(
-        packet_pool: MuxPacketPool<P>,
-        incoming: Receiver<MuxPacket<P::Buffer>>,
-        outgoing: Sender<MuxPacket<P::Buffer>>,
-    ) -> Self {
+    pub fn new(packet_pool: P, incoming: Receiver<P::Packet>, outgoing: Sender<P::Packet>) -> Self {
         let mut bincode_config = bincode::config();
         bincode_config.limit(MAX_MESSAGE_LEN as u64);
         UnreliableBincodeChannel {
@@ -101,7 +96,7 @@ where
 /// Wrapper over an `UnreliableBincodeChannel` that only allows a single message type.
 pub struct UnreliableTypedChannel<T, P>
 where
-    P: BufferPool,
+    P: PacketPool,
 {
     channel: UnreliableBincodeChannel<P>,
     _phantom: PhantomData<T>,
@@ -109,13 +104,9 @@ where
 
 impl<T, P> UnreliableTypedChannel<T, P>
 where
-    P: BufferPool,
+    P: PacketPool,
 {
-    pub fn new(
-        packet_pool: MuxPacketPool<P>,
-        incoming: Receiver<MuxPacket<P::Buffer>>,
-        outgoing: Sender<MuxPacket<P::Buffer>>,
-    ) -> Self {
+    pub fn new(packet_pool: P, incoming: Receiver<P::Packet>, outgoing: Sender<P::Packet>) -> Self {
         UnreliableTypedChannel {
             channel: UnreliableBincodeChannel::new(packet_pool, incoming, outgoing),
             _phantom: PhantomData,
@@ -130,7 +121,7 @@ where
 impl<T, P> UnreliableTypedChannel<T, P>
 where
     T: Serialize,
-    P: BufferPool,
+    P: PacketPool,
 {
     pub async fn send(&mut self, msg: &T) -> Result<(), SendError> {
         self.channel.send(msg).await
@@ -140,7 +131,7 @@ where
 impl<'a, T, P> UnreliableTypedChannel<T, P>
 where
     T: Deserialize<'a>,
-    P: BufferPool,
+    P: PacketPool,
 {
     pub async fn recv(&'a mut self) -> Result<T, RecvError> {
         self.channel.recv().await
