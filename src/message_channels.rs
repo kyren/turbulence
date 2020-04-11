@@ -137,7 +137,7 @@ where
                     &mut channel_builder,
                     &mut channels_map,
                 )
-                .map_err(move |error| ChannelTaskError { type_name, error })
+                .map_err(move |source| ChannelTaskError { type_name, source })
             })
             .collect();
 
@@ -197,7 +197,13 @@ impl MessageChannels {
         !self.disconnected
     }
 
+    /// Consume this `MessageChannels` and receive the networking task shutdown error.
+    ///
+    /// If this `MessageChannels is disconnected, returns the error that caused it to become
+    /// disconnected.  If it is not disconnected, it will become disconnected by calling this and
+    /// return that error.
     pub async fn recv_err(self) -> ChannelTaskError {
+        drop(self.channels);
         self.task_error.await.expect("task has panicked")
     }
 
