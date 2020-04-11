@@ -37,7 +37,12 @@ pub enum Error {
 
 #[derive(Clone, Debug)]
 pub struct Settings {
-    /// The target outgoing bandwidth, in bytes / sec
+    /// The target outgoing bandwidth, in bytes / sec.
+    ///
+    /// This is the target bandwidth usage for all sent packets, not the target bandwidth for the
+    /// actual underlying stream.  Both sends and resends (but not currently acks) count against
+    /// this bandwidth limit, so this is designed to limit the amount of traffic this channel
+    /// produces.
     pub bandwidth: u32,
     /// The size of the incoming ring buffer
     pub recv_window_size: u32,

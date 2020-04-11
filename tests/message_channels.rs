@@ -19,6 +19,10 @@ mod util;
 
 use self::util::{SimpleBufferPool, SimpleRuntime};
 
+// Define two message types, `Message1` and `Message2`
+
+// `Message1` is a reliable message on channel "0" that has a maximum bandwidth of 4KB/s
+
 #[derive(Serialize, Deserialize)]
 struct Message1(i32);
 
@@ -43,6 +47,8 @@ const MESSAGE1_SETTINGS: MessageChannelSettings = MessageChannelSettings {
     packet_buffer_size: 8,
 };
 
+// `Message2` is an unreliable message type on channel "1"
+
 #[derive(Serialize, Deserialize)]
 struct Message2(i32);
 
@@ -58,6 +64,9 @@ fn test_message_channels() {
     let mut runtime = SimpleRuntime::new();
     let pool = MuxPacketPool::new(BufferPacketPool::new(SimpleBufferPool(32)));
 
+    // Set up two packet multiplexers, one for our sending "A" side and one for our receiving "B"
+    // side.  They should both have exactly the same message types registered.
+
     let mut multiplexer_a = PacketMultiplexer::new();
     let mut builder_a = MessageChannelsBuilder::new(runtime.handle(), pool.clone());
     builder_a.register::<Message1>(MESSAGE1_SETTINGS).unwrap();
@@ -70,7 +79,11 @@ fn test_message_channels() {
     builder_b.register::<Message2>(MESSAGE2_SETTINGS).unwrap();
     let mut channels_b = builder_b.build(&mut multiplexer_b);
 
+    // Spawn a task that simulates a perfect network connection, and takes outgoing packets from
+    // each multiplexer and gives it to the other.
     runtime.spawn(async move {
+        // We need to send packets bidirectionally from A -> B and B -> A, because reliable message
+        // channels must have a way to send acknowledgements.
         let (mut a_incoming, mut a_outgoing) = multiplexer_a.start();
         let (mut b_incoming, mut b_outgoing) = multiplexer_b.start();
         loop {
@@ -88,13 +101,21 @@ fn test_message_channels() {
 
     let (is_done_send, mut is_done_recv) = oneshot::channel();
     runtime.spawn(async move {
+        // Now send some traffic across...
+
+        // We're using the async `MessageChannels` API, but in a game you might use the sync API.
         channels_a.async_send(Message1(42)).await;
         channels_a.flush::<Message1>();
         assert_eq!(channels_b.async_recv::<Message1>().await.0, 42);
 
+        // Since our underlying simulated network is perfect, our unreliable message will always
+        // arrive.
         channels_a.async_send(Message2(13)).await;
         channels_a.flush::<Message2>();
         assert_eq!(channels_b.async_recv::<Message2>().await.0, 13);
+
+        // Each message channel is independent of the others, and they all have their own
+        // independent instances of message coalescing and reliability protocols.
 
         channels_a.async_send(Message1(20)).await;
         channels_a.async_send(Message2(30)).await;

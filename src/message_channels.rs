@@ -30,7 +30,11 @@ use crate::{
 pub struct MessageChannelSettings {
     pub channel: PacketChannel,
     pub channel_mode: MessageChannelMode,
+    /// The buffer size for the mpsc channel of messages that transports messages of this type to
+    /// the network task.
     pub message_buffer_size: usize,
+    /// The buffer size for the mpsc channel of packets for this channel that is in the packet
+    /// multiplexer for this message type.
     pub packet_buffer_size: usize,
 }
 
