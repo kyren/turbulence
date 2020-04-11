@@ -1,6 +1,8 @@
 pub mod buffer;
 pub mod channel_builder;
 pub mod compressed_typed_channel;
+mod event_watch;
+pub mod message_channels;
 pub mod packet;
 pub mod packet_multiplexer;
 pub mod reliable_bincode_channel;
