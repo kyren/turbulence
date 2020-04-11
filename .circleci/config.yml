@@ -11,8 +11,6 @@ jobs:
           command: |
             rustc --version
             cargo --version
-            rustc +nightly --version
-            cargo +nightly --version
             rustup --version
       - run:
           name: Calculate dependencies
