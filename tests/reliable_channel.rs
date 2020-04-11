@@ -149,15 +149,17 @@ fn test_reliable_stream() {
 
     let mut a_is_done = false;
     let mut b_is_done = false;
-    loop {
+    for _ in 0..100_000 {
         a_is_done = a_is_done || a_done.try_recv().unwrap().is_some();
         b_is_done = b_is_done || b_done.try_recv().unwrap().is_some();
 
         if a_is_done && b_is_done {
-            break;
+            return;
         }
 
         runtime.run_until_stalled();
         runtime.advance_time(50);
     }
+
+    panic!("didn't finish in time");
 }

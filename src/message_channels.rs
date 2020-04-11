@@ -47,9 +47,9 @@ pub enum MessageChannelMode {
     },
 }
 
-pub trait ChannelMessage: Serialize + DeserializeOwned + Any + Send + Sync {}
+pub trait ChannelMessage: Serialize + DeserializeOwned + Send + Sync + 'static {}
 
-impl<T: Serialize + DeserializeOwned + Any + Send + Sync> ChannelMessage for T {}
+impl<T: Serialize + DeserializeOwned + Send + Sync + 'static> ChannelMessage for T {}
 
 #[derive(Debug, Error)]
 pub enum ChannelAlreadyRegistered {
