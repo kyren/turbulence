@@ -4,7 +4,7 @@
 
 ---
 
-[![Build Status](https://img.shields.io/circleci/project/github/kyren/goggles.svg)](https://circleci.com/gh/kyren/goggles)
+[![Build Status](https://img.shields.io/circleci/project/github/kyren/goggles.svg)](https://circleci.com/gh/kyren/turbulence)
 
 Multiplexed, optionally reliable, async, transport agnostic, reactor agnostic
 networking library for games.
