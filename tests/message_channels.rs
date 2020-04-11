@@ -83,10 +83,49 @@ fn test_message_channels() {
     // each multiplexer and gives it to the other.
     runtime.spawn(async move {
         // We need to send packets bidirectionally from A -> B and B -> A, because reliable message
-        // channels must have a way to send acknowledgements.
+        // channels must have a way to send acknowledgments.
         let (mut a_incoming, mut a_outgoing) = multiplexer_a.start();
         let (mut b_incoming, mut b_outgoing) = multiplexer_b.start();
         loop {
+            // How to best send packets from the multiplexer to the internet and vice versa is
+            // somewhat complex.  This is not a great example of how to do it.
+            //
+            // Calling `x_incoming.send(packet).await` here is using `IncomingMultiplexedPackets`
+            // `Sink` implementation, which forwards to the incoming mpsc channel for whatever
+            // channel this packet is for.  `turbulence` *only* uses sync channels with static size,
+            // so it is expected that this buffer might be full.  You might want to instead use
+            // `IncomingMultiplexedPackets::try_send` here and if the incoming buffer is full,
+            // simply drop the packet.  A full buffer means some level of the pipeline cannot keep
+            // up, and dropping the packet rather than blocking on delivering here means that a
+            // backup on one channel will not potentially block other channels from receiving
+            // packets.
+            //
+            // On the outgoing side, since `turbulence` assumes an unreliable transport, it also
+            // assumes that the actual outgoing transport can send at more or less an arbitrary
+            // rate.  For this reason, the different internal channel types *block* on sending
+            // outgoing packets.  It is assumed that the outgoing packet buffer would only be full
+            // under very high, temporary CPU load on the host, and they block to let the task that
+            // actually sends packets catch up.  This assumption works if the outgoing stream is
+            // only really CPU bound: that it is not harmful to block on outgoing packets because
+            // we're cooperating with a task that will send UDP packets as fast as it can anyway, so
+            // we won't be blocking for long (and it's better not to burn up even more CPU making
+            // more packets that might not be sent).
+            //
+            // So why the difference, why drop incoming packets but block on outgoing packets?
+            // Well, this again assumes that the task that sends packets is utterly simple, that it
+            // is a task that just calls `sendto` or equivalent as fast as it can.  On the incoming
+            // side the pipeline is much longer, and will usually include the actual main game loop.
+            // "Blocking" in this case may simply mean only processing a maximum number of incoming
+            // messages per tick, or something along those lines.  In that case, since "blocking" is
+            // not a function of purely CPU load, dropping incoming packets for fairness and latency
+            // may be reasonable.  On the outgoing side, we're not assuming that we may have somehow
+            // accidentally *sent* too much data, we of course assume that we are following our
+            // *own* rules, so the only cause of a backup should be very high CPU load.
+            //
+            // Since this test unrealistically assumes perfect delivery of an unreliable channel,
+            // and since this is all hard to simulate in an example with no actual network involved,
+            // we just provide perfect instant delivery.  None of the subtlety of doing this in a
+            // real project is captured in this simplistic example.
             match future::select(a_outgoing.next(), b_outgoing.next()).await {
                 Either::Left((Some(packet), _)) => {
                     b_incoming.send(packet).await.unwrap();

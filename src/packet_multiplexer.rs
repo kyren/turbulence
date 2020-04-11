@@ -233,6 +233,7 @@ impl<P> IncomingTrySendError<P> {
     }
 }
 
+/// A handle to push incoming packets into the multiplexer.
 pub struct IncomingMultiplexedPackets<P> {
     incoming: HashMap<PacketChannel, ChannelSender<P>>,
     to_send: Option<P>,
@@ -243,7 +244,7 @@ impl<P> IncomingMultiplexedPackets<P>
 where
     P: Packet + Unpin,
 {
-    /// Attempt to send the given packet to the appropriate multiplexed channel.
+    /// Attempt to send the given packet to the appropriate multiplexed channel without blocking.
     ///
     /// If a normal error occurs, returns `IncomingError::Error`, if the destination channel buffer
     /// is full, returns `IncomingTrySendError::IsFull`.
@@ -338,6 +339,7 @@ where
     }
 }
 
+/// A handle to receive outgoing packets from the multiplexer.
 pub struct OutgoingMultiplexedPackets<P> {
     outgoing: SelectAll<ChannelReceiver<P>>,
 }
