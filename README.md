@@ -77,7 +77,7 @@ You would need this library only if most or all of the following is true:
 
 2) You have a game that needs to send both fast unreliable data like position
    and also stream reliable game related data such as terrain data or chat or
-   complex entity data that is much more bandwidth intensive.
+   complex entity data that is bandwidth intensive.
    
 3) You have several independent streams of reliable data and they need to not
    block each other or choke off fast unreliable data.
