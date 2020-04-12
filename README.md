@@ -109,7 +109,7 @@ doesn't concern itself with congestion control, this cuts out a *lot* of the
 complexity.  Still, this is the most complex part of this library, but it is
 well tested and definitely at least works *in the environments I have run so
 far*.  It's not very complicated, it could probably be described as "the
-simplest TCP that you can reasonably write and use".
+simplest TCP-like thing that you could reasonably write and use".
 
 You should not be using the reliable streams in this library in the same way
 that you use TCP.  A good example of what *shouldn't* probably go over this
