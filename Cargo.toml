@@ -3,7 +3,15 @@ name = "turbulence"
 version = "0.1.0"
 authors = ["kyren <kerriganw@gmail.com>"]
 edition = "2018"
+description = "Tools to provide serialization, multiplexing, optional reliability, and optional compression to a game's networking."
+readme = "README.md"
+repository = "https://github.com/kyren/goggles"
+documentation = "https://docs.rs/turbulence"
+keywords = ["gamedev", "networking"]
 license = "MIT OR CC-0"
+
+[badges]
+circle-ci = { repository = "kyren/turbulence", branch = "master" }
 
 [dependencies]
 bincode = "1.1"

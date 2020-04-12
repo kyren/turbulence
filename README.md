@@ -4,7 +4,10 @@
 
 ---
 
-[![Build Status](https://img.shields.io/circleci/project/github/kyren/goggles.svg)](https://circleci.com/gh/kyren/turbulence)
+[![Build Status](https://img.shields.io/circleci/project/github/kyren/turbulence.svg)](https://circleci.com/gh/kyren/turbulence)
+[![Latest Version](https://img.shields.io/crates/v/turbulence.svg)](https://crates.io/crates/turbulence)
+[![API Documentation](https://docs.rs/turbulence/badge.svg)](https://docs.rs/turbulence)
+
 
 Multiplexed, optionally reliable, async, transport agnostic, reactor agnostic
 networking library for games.
