@@ -67,7 +67,7 @@ This is what the `MessageChannels` interface provides.
 
 ### Questions you might ask
 
-*Why would you ever need something like this?*
+***Why would you ever need something like this?***
 
 You would need this library only if most or all of the following is true:
 
@@ -86,7 +86,7 @@ You would need this library only if most or all of the following is true:
    level networking sockets, or to use existing networking libraries that hook
    deeply into the OS or even just assume the existence of UDP sockets.
 
-*Why do you need this library, doesn't XYZ protocol already do this* (Where XYZ
+***Why do you need this library, doesn't XYZ protocol already do this*** (Where XYZ
 is plain TCP, plain UDP, SCTP, QUIC, etc)
 
 In a way, this library is equivalent to having multiple UDP connections and
@@ -100,9 +100,9 @@ eventually supports truly unrleliable, unordered messages (AFAIK currently this
 is only a proposed extension?), AND it has an implementation that you can use,
 then certainly using QUIC would be a viable option.
 
-*So this library contains a re-implementation of something like TCP, isn't
+***So this library contains a re-implementation of something like TCP, isn't
 trying to implement something like that fiendishly complex and generally a bad
-idea?*
+idea?***
 
 Probably, but since it is designed for low-ish static bandwidth limits and
 doesn't concern itself with congestion control, this cuts out a *lot* of the
@@ -121,9 +121,9 @@ The reliable streams here are for things that are normally gameplay limited but
 might be spikey, and where you *want* to limit the bandwidth so those spikes
 don't slow down more important data or slow down other players.
 
-*Why is this library so generic?  It's TOO generic, everything is based on
+***Why is this library so generic?  It's TOO generic, everything is based on
 traits like `PacketPool` and `Runtime` and it's hard to use.  Why can't you just
-use tokio / async-std?*
+use tokio / async-std?***
 
 The `PacketPool` trait exists not only to allow for custom packet types but also
 for things like the multiplexer, so it serves double duty.  `Runtime` exists
