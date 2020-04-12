@@ -8,7 +8,7 @@ readme = "README.md"
 repository = "https://github.com/kyren/goggles"
 documentation = "https://docs.rs/turbulence"
 keywords = ["gamedev", "networking"]
-license = "MIT OR CC0"
+license = "MIT OR Apache-2.0"
 
 [badges]
 circle-ci = { repository = "kyren/turbulence", branch = "master" }
