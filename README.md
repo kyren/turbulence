@@ -23,7 +23,7 @@ and then gives you a set of handles for pushing packets into and taking packets
 out of this `MessageChannels` interface.  The user is expected to take outgoing
 packets and send them out over UDP (or similar), and also read incoming packets
 from UDP (or similar) and pass them in.  The only reliability requirement for
-using this is that if a packet is received on a remote, it must be intact and
+using this is that if a packet is received from a remote, it must be intact and
 uncorrupted, but other than this the underlying transport does not need to
 provide any reliability or order guarantees.  The reason that no corruption
 check is performed is that many transport layers already provide this for free,
