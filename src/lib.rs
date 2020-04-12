@@ -11,3 +11,22 @@ pub mod runtime;
 pub mod unreliable_bincode_channel;
 pub mod unreliable_channel;
 mod windows;
+
+pub use self::{
+    buffer::{BufferPacket, BufferPacketPool, BufferPool},
+    channel_builder::ChannelBuilder,
+    compressed_typed_channel::CompressedTypedChannel,
+    message_channels::{
+        MessageChannelMode, MessageChannelSettings, MessageChannels, MessageChannelsBuilder,
+    },
+    packet::{Packet, PacketPool, MAX_PACKET_LEN},
+    packet_multiplexer::{
+        ChannelStatistics, ChannelTotals, IncomingMultiplexedPackets, MuxPacket, MuxPacketPool,
+        OutgoingMultiplexedPackets, PacketChannel, PacketMultiplexer,
+    },
+    reliable_bincode_channel::{ReliableBincodeChannel, ReliableTypedChannel},
+    reliable_channel::ReliableChannel,
+    runtime::Runtime,
+    unreliable_bincode_channel::{UnreliableBincodeChannel, UnreliableTypedChannel},
+    unreliable_channel::UnreliableChannel,
+};
