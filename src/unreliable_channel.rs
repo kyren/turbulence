@@ -66,10 +66,10 @@ where
         let start = self.out_packet.len();
         if self.out_packet.capacity() - start < msg.len() + 2 {
             self.flush().await?;
-        }
 
-        if self.out_packet.capacity() - start < msg.len() + 2 {
-            return Err(SendError::TooBig);
+            if self.out_packet.capacity() < msg.len() + 2 {
+                return Err(SendError::TooBig);
+            }
         }
 
         let mut len = [0; 2];
