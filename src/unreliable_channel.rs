@@ -1,4 +1,4 @@
-use std::mem;
+use std::{convert::TryInto, mem};
 
 use byteorder::{ByteOrder, LittleEndian};
 use futures::{
@@ -63,17 +63,19 @@ where
     /// Messages are coalesced into larger packets before being sent, so in order to guarantee that
     /// the message is actually sent, you must call `flush`.
     pub async fn send(&mut self, msg: &[u8]) -> Result<(), SendError> {
+        let msg_len: u16 = msg.len().try_into().map_err(|_| SendError::TooBig)?;
+
         let start = self.out_packet.len();
-        if self.out_packet.capacity() - start < msg.len() + 2 {
+        if self.out_packet.capacity() - start < msg_len as usize + 2 {
             self.flush().await?;
 
-            if self.out_packet.capacity() < msg.len() + 2 {
+            if self.out_packet.capacity() < msg_len as usize + 2 {
                 return Err(SendError::TooBig);
             }
         }
 
         let mut len = [0; 2];
-        LittleEndian::write_u16(&mut len, msg.len() as u16);
+        LittleEndian::write_u16(&mut len, msg_len);
         self.out_packet.extend(&len);
         self.out_packet.extend(&msg);
 
