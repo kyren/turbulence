@@ -30,11 +30,11 @@ use crate::{
 pub struct MessageChannelSettings {
     pub channel: PacketChannel,
     pub channel_mode: MessageChannelMode,
-    /// The buffer size for the mpsc channel of messages that transports messages of this type to
-    /// the network task.
+    /// The buffer size for the mpsc channel of messages that transports messages of this type to /
+    /// from the network task.
     pub message_buffer_size: usize,
-    /// The buffer size for the mpsc channel of packets for this channel that is in the packet
-    /// multiplexer for this message type.
+    /// The buffer size for the mpsc channel of packets for this message type that transports
+    /// packets to / from the packet multiplexer.
     pub packet_buffer_size: usize,
 }
 
@@ -203,7 +203,7 @@ impl MessageChannels {
 
     /// Consume this `MessageChannels` and receive the networking task shutdown error.
     ///
-    /// If this `MessageChannels is disconnected, returns the error that caused it to become
+    /// If this `MessageChannels` is disconnected, returns the error that caused it to become
     /// disconnected.  If it is not disconnected, it will become disconnected by calling this and
     /// return that error.
     pub async fn recv_err(self) -> ChannelTaskError {
