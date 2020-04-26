@@ -45,7 +45,7 @@ where
     }
 
     fn resize(&mut self, len: usize, val: u8) {
-        assert!(len <= self.capacity());
+        assert!(len <= self.buffer.len());
         for i in self.len..len {
             self.buffer[i] = val;
         }

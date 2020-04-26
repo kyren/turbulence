@@ -9,7 +9,7 @@ use futures::{
     future::{self, BoxFuture},
     select,
     stream::FuturesUnordered,
-    FutureExt, SinkExt, StreamExt, TryFutureExt,
+    FutureExt, StreamExt, TryFutureExt,
 };
 use serde::{de::DeserializeOwned, Serialize};
 use thiserror::Error;
@@ -460,7 +460,8 @@ where
 
                     match next {
                         Next::Incoming(incoming) => {
-                            incoming_message_sender.send(incoming).await?;
+                            future::poll_fn(|cx| incoming_message_sender.poll_ready(cx)).await?;
+                            incoming_message_sender.start_send(incoming)?;
                         }
                         Next::Outgoing(outgoing) => {
                             channel.send(&outgoing).await?;
@@ -505,7 +506,8 @@ where
 
                     match next {
                         Next::Incoming(incoming) => {
-                            incoming_message_sender.send(incoming).await?;
+                            future::poll_fn(|cx| incoming_message_sender.poll_ready(cx)).await?;
+                            incoming_message_sender.start_send(incoming)?;
                         }
                         Next::Outgoing(outgoing) => {
                             channel.send(&outgoing).await?;
@@ -550,7 +552,8 @@ where
 
                     match next {
                         Next::Incoming(incoming) => {
-                            incoming_message_sender.send(incoming).await?;
+                            future::poll_fn(|cx| incoming_message_sender.poll_ready(cx)).await?;
+                            incoming_message_sender.start_send(incoming)?;
                         }
                         Next::Outgoing(outgoing) => {
                             channel.send(&outgoing).await?;

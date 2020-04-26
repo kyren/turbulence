@@ -3,7 +3,8 @@ use std::{convert::TryInto, mem};
 use byteorder::{ByteOrder, LittleEndian};
 use futures::{
     channel::mpsc::{Receiver, Sender},
-    SinkExt, StreamExt,
+    future::poll_fn,
+    StreamExt,
 };
 use thiserror::Error;
 
@@ -89,9 +90,11 @@ where
     pub async fn flush(&mut self) -> Result<(), SendError> {
         if !self.out_packet.is_empty() {
             let out_packet = mem::replace(&mut self.out_packet, self.packet_pool.acquire());
-            self.outgoing_packets
-                .send(out_packet)
+            poll_fn(|cx| self.outgoing_packets.poll_ready(cx))
                 .await
+                .map_err(|_| SendError::Disconnected)?;
+            self.outgoing_packets
+                .start_send(out_packet)
                 .map_err(|_| SendError::Disconnected)
         } else {
             Ok(())

@@ -15,7 +15,7 @@ use futures::{
     channel::{mpsc, oneshot},
     future::{self, Fuse, FusedFuture},
     lock::{Mutex, MutexGuard},
-    pin_mut, select, FutureExt, SinkExt, StreamExt,
+    pin_mut, select, FutureExt, StreamExt,
 };
 use thiserror::Error;
 
@@ -395,9 +395,11 @@ where
         );
 
         self.bandwidth_limiter.take_bytes(packet.len() as u32);
-        self.outgoing
-            .send(packet)
+        future::poll_fn(|cx| self.outgoing.poll_ready(cx))
             .await
+            .map_err(|_| Error::Disconnected)?;
+        self.outgoing
+            .start_send(packet)
             .map_err(|_| Error::Disconnected)?;
 
         self.remote_recv_available -= send_amt;
@@ -435,9 +437,13 @@ where
                     .get_unacked(unacked.start, &mut packet[6..]);
 
                 self.bandwidth_limiter.take_bytes(packet.len() as u32);
-                self.outgoing
-                    .send(packet)
+
+                let outgoing = &mut self.outgoing;
+                future::poll_fn(|cx| outgoing.poll_ready(cx))
                     .await
+                    .map_err(|_| Error::Disconnected)?;
+                outgoing
+                    .start_send(packet)
                     .map_err(|_| Error::Disconnected)?;
             }
         }
@@ -544,9 +550,11 @@ where
 
                 // We currently do not count acknowledgement packets against the outgoing bandwidth
                 // at all.
-                self.outgoing
-                    .send(ack_packet)
+                future::poll_fn(|cx| self.outgoing.poll_ready(cx))
                     .await
+                    .map_err(|_| Error::Disconnected)?;
+                self.outgoing
+                    .start_send(ack_packet)
                     .map_err(|_| Error::Disconnected)?;
 
                 if shared.recv_window.read_available() > 0 {
