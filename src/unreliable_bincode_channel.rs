@@ -37,7 +37,7 @@ where
     P: PacketPool,
 {
     channel: UnreliableChannel<P>,
-    buffer: Vec<u8>,
+    buffer: Box<[u8]>,
     bincode_config: bincode::Config,
 }
 
@@ -50,7 +50,7 @@ where
         bincode_config.limit(MAX_MESSAGE_LEN as u64);
         UnreliableBincodeChannel {
             channel: UnreliableChannel::new(packet_pool, incoming, outgoing),
-            buffer: Vec::new(),
+            buffer: vec![0; MAX_MESSAGE_LEN].into_boxed_slice(),
             bincode_config,
         }
     }
@@ -60,12 +60,14 @@ where
     /// Messages are coalesced into larger packets before being sent, so in order to guarantee that
     /// the message is actually sent, you must call `flush`.
     pub async fn send<T: Serialize>(&mut self, msg: &T) -> Result<(), SendError> {
-        self.buffer.clear();
+        let mut w = &mut self.buffer[..];
         self.bincode_config
-            .serialize_into(&mut self.buffer, msg)
+            .serialize_into(&mut w, msg)
             .map_err(SendError::BincodeError)?;
+        let remaining = w.len();
+        let written = self.buffer.len() - remaining;
         self.channel
-            .send(&self.buffer)
+            .send(&self.buffer[0..written])
             .await
             .map_err(from_inner_send_err)
     }
@@ -80,15 +82,13 @@ where
 
     /// Receive a deserializable message type as soon as the next message is available.
     pub async fn recv<'a, T: Deserialize<'a>>(&'a mut self) -> Result<T, RecvError> {
-        self.buffer.resize(MAX_MESSAGE_LEN, 0);
         let len = self
             .channel
             .recv(&mut self.buffer[..])
             .await
             .map_err(from_inner_recv_err)?;
-        self.buffer.truncate(len);
         self.bincode_config
-            .deserialize(&self.buffer)
+            .deserialize(&self.buffer[0..len])
             .map_err(RecvError::BincodeError)
     }
 }

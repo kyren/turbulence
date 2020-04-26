@@ -31,10 +31,14 @@ pub struct ReliableBincodeChannel {
     channel: ReliableChannel,
     bincode_config: bincode::Config,
     max_message_len: u16,
-    write_buffer: Vec<u8>,
+
+    write_buffer: Box<[u8]>,
     write_pos: usize,
-    read_buffer: Vec<u8>,
+    write_end: usize,
+
+    read_buffer: Box<[u8]>,
     read_pos: usize,
+    read_end: usize,
 }
 
 impl ReliableBincodeChannel {
@@ -47,10 +51,12 @@ impl ReliableBincodeChannel {
             channel,
             bincode_config,
             max_message_len: max_message_len as u16,
-            write_buffer: Vec::new(),
+            write_buffer: vec![0; max_message_len].into_boxed_slice(),
             write_pos: 0,
-            read_buffer: Vec::new(),
+            write_end: 0,
+            read_buffer: vec![0; max_message_len].into_boxed_slice(),
             read_pos: 0,
+            read_end: 0,
         }
     }
 
@@ -62,20 +68,19 @@ impl ReliableBincodeChannel {
     pub async fn send<T: Serialize>(&mut self, msg: &T) -> Result<(), Error> {
         self.finish_write().await?;
         self.write_pos = 0;
-        self.write_buffer.resize(2, 0);
-        match self
-            .bincode_config
-            .serialize_into(&mut self.write_buffer, msg)
-        {
+        self.write_end = 2;
+        let mut w = &mut self.write_buffer[2..];
+        match self.bincode_config.serialize_into(&mut w, msg) {
             Ok(()) => {
-                let message_len = self.write_buffer.len() as u16 - 2;
-                LittleEndian::write_u16(&mut self.write_buffer[0..2], message_len);
+                let remaining = w.len();
+                self.write_end = self.write_buffer.len() - remaining;
+                LittleEndian::write_u16(&mut self.write_buffer[0..2], (self.write_end - 2) as u16);
                 self.finish_write().await?;
                 Ok(())
             }
             Err(err) => {
-                self.write_buffer.clear();
                 self.write_pos = 0;
+                self.write_end = 0;
                 Err(err.into())
             }
         }
@@ -89,8 +94,8 @@ impl ReliableBincodeChannel {
 
     /// Read the next available incoming message.
     pub async fn recv<'a, T: Deserialize<'a>>(&'a mut self) -> Result<T, Error> {
-        if self.read_pos < 2 {
-            self.read_buffer.resize(2, 0);
+        if self.read_end < 2 {
+            self.read_end = 2;
         }
         self.finish_read().await?;
 
@@ -98,18 +103,22 @@ impl ReliableBincodeChannel {
         if message_len > self.max_message_len {
             return Err(Error::MessageTooLarge);
         }
-        self.read_buffer.resize(message_len as usize + 2, 0);
+        self.read_end = message_len as usize + 2;
         self.finish_read().await?;
 
+        let res = self
+            .bincode_config
+            .deserialize(&self.read_buffer[2..self.read_end]);
         self.read_pos = 0;
-        Ok(self.bincode_config.deserialize(&self.read_buffer[2..])?)
+        self.read_end = 0;
+        res.map_err(|e| e.into())
     }
 
     async fn finish_write(&mut self) -> Result<(), Error> {
-        while self.write_pos < self.write_buffer.len() {
+        while self.write_pos < self.write_end {
             let len = self
                 .channel
-                .write(&self.write_buffer[self.write_pos..])
+                .write(&self.write_buffer[self.write_pos..self.write_end])
                 .await?;
             self.write_pos += len;
         }
@@ -117,10 +126,10 @@ impl ReliableBincodeChannel {
     }
 
     async fn finish_read(&mut self) -> Result<(), Error> {
-        while self.read_pos < self.read_buffer.len() {
+        while self.read_pos < self.read_end {
             let len = self
                 .channel
-                .read(&mut self.read_buffer[self.read_pos..])
+                .read(&mut self.read_buffer[self.read_pos..self.read_end])
                 .await?;
             self.read_pos += len;
         }
