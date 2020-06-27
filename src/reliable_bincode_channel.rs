@@ -1,5 +1,6 @@
 use std::{marker::PhantomData, u16};
 
+use bincode::Options as _;
 use byteorder::{ByteOrder, LittleEndian};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -29,7 +30,6 @@ pub const MAX_MESSAGE_LEN: usize = u16::MAX as usize;
 /// MAX_MESSAGE_LEN large).
 pub struct ReliableBincodeChannel {
     channel: ReliableChannel,
-    bincode_config: bincode::Config,
     max_message_len: u16,
 
     write_buffer: Box<[u8]>,
@@ -45,11 +45,8 @@ impl ReliableBincodeChannel {
     /// Create a new `ReliableBincodeChannel` with a maximum message size of `max_message_len`.
     pub fn new(channel: ReliableChannel, max_message_len: usize) -> Self {
         assert!(max_message_len <= MAX_MESSAGE_LEN);
-        let mut bincode_config = bincode::config();
-        bincode_config.limit(max_message_len as u64);
         ReliableBincodeChannel {
             channel,
-            bincode_config,
             max_message_len: max_message_len as u16,
             write_buffer: vec![0; max_message_len].into_boxed_slice(),
             write_pos: 0,
@@ -69,8 +66,9 @@ impl ReliableBincodeChannel {
         self.finish_write().await?;
         self.write_pos = 0;
         self.write_end = 2;
+        let bincode_config = self.bincode_config();
         let mut w = &mut self.write_buffer[2..];
-        match self.bincode_config.serialize_into(&mut w, msg) {
+        match bincode_config.serialize_into(&mut w, msg) {
             Ok(()) => {
                 let remaining = w.len();
                 self.write_end = self.write_buffer.len() - remaining;
@@ -106,9 +104,8 @@ impl ReliableBincodeChannel {
         self.read_end = message_len as usize + 2;
         self.finish_read().await?;
 
-        let res = self
-            .bincode_config
-            .deserialize(&self.read_buffer[2..self.read_end]);
+        let bincode_config = self.bincode_config();
+        let res = bincode_config.deserialize(&self.read_buffer[2..self.read_end]);
         self.read_pos = 0;
         self.read_end = 0;
         res.map_err(|e| e.into())
@@ -134,6 +131,10 @@ impl ReliableBincodeChannel {
             self.read_pos += len;
         }
         Ok(())
+    }
+
+    fn bincode_config(&self) -> impl bincode::Options + Copy {
+        bincode::options().with_limit(self.max_message_len as u64)
     }
 }
 

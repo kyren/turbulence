@@ -1,5 +1,6 @@
 use std::marker::PhantomData;
 
+use bincode::Options as _;
 use futures::channel::mpsc::{Receiver, Sender};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -38,7 +39,6 @@ where
 {
     channel: UnreliableChannel<P>,
     buffer: Box<[u8]>,
-    bincode_config: bincode::Config,
 }
 
 impl<P> UnreliableBincodeChannel<P>
@@ -46,12 +46,9 @@ where
     P: PacketPool,
 {
     pub fn new(packet_pool: P, incoming: Receiver<P::Packet>, outgoing: Sender<P::Packet>) -> Self {
-        let mut bincode_config = bincode::config();
-        bincode_config.limit(MAX_MESSAGE_LEN as u64);
         UnreliableBincodeChannel {
             channel: UnreliableChannel::new(packet_pool, incoming, outgoing),
             buffer: vec![0; MAX_MESSAGE_LEN].into_boxed_slice(),
-            bincode_config,
         }
     }
 
@@ -61,7 +58,7 @@ where
     /// the message is actually sent, you must call `flush`.
     pub async fn send<T: Serialize>(&mut self, msg: &T) -> Result<(), SendError> {
         let mut w = &mut self.buffer[..];
-        self.bincode_config
+        bincode_config()
             .serialize_into(&mut w, msg)
             .map_err(SendError::BincodeError)?;
         let remaining = w.len();
@@ -87,7 +84,7 @@ where
             .recv(&mut self.buffer[..])
             .await
             .map_err(from_inner_recv_err)?;
-        self.bincode_config
+        bincode_config()
             .deserialize(&self.buffer[0..len])
             .map_err(RecvError::BincodeError)
     }
@@ -155,4 +152,8 @@ fn from_inner_recv_err(err: unreliable_channel::RecvError) -> RecvError {
             unreachable!("messages that are too large are caught by bincode configuration")
         }
     }
+}
+
+fn bincode_config() -> impl bincode::Options + Copy {
+    bincode::options().with_limit(MAX_MESSAGE_LEN as u64)
 }

@@ -1,5 +1,6 @@
 use std::{convert::TryInto, marker::PhantomData, u16};
 
+use bincode::Options as _;
 use byteorder::{ByteOrder, LittleEndian};
 use serde::{de::DeserializeOwned, Serialize};
 use snap::raw::{decompress_len, max_compress_len, Decoder as SnapDecoder, Encoder as SnapEncoder};
@@ -33,7 +34,6 @@ pub const MAX_CHUNK_LEN: usize = u16::MAX as usize + 1;
 /// individual message.
 pub struct CompressedTypedChannel<T> {
     channel: ReliableChannel,
-    bincode_config: bincode::Config,
     max_chunk_len: usize,
 
     send_chunk: Vec<u8>,
@@ -59,13 +59,10 @@ impl<T> CompressedTypedChannel<T> {
     ///
     /// An individual message may be no more than `max_chunk_len` in length.
     pub fn new(channel: ReliableChannel, max_chunk_len: usize) -> Self {
-        let mut bincode_config = bincode::config();
         assert!(max_chunk_len > 1);
         assert!(max_chunk_len <= MAX_CHUNK_LEN as usize);
-        bincode_config.limit(max_chunk_len as u64);
         CompressedTypedChannel {
             channel,
-            bincode_config,
             max_chunk_len,
             send_chunk: Vec::new(),
             write_buffer: Vec::new(),
@@ -144,17 +141,22 @@ impl<T> CompressedTypedChannel<T> {
         }
         Ok(())
     }
+
+    fn bincode_config(&self) -> impl bincode::Options + Copy {
+        bincode::options().with_limit(self.max_chunk_len as u64)
+    }
 }
 
 impl<T: Serialize> CompressedTypedChannel<T> {
     pub async fn send(&mut self, msg: &T) -> Result<(), Error> {
-        let serialized_len = self.bincode_config.serialized_size(msg)?;
+        let bincode_config = self.bincode_config();
+
+        let serialized_len = bincode_config.serialized_size(msg)?;
         if self.send_chunk.len() + serialized_len as usize > self.max_chunk_len {
             self.write_send_chunk().await?;
         }
 
-        self.bincode_config
-            .serialize_into(&mut self.send_chunk, msg)?;
+        bincode_config.serialize_into(&mut self.send_chunk, msg)?;
 
         Ok(())
     }
@@ -162,10 +164,12 @@ impl<T: Serialize> CompressedTypedChannel<T> {
 
 impl<T: DeserializeOwned> CompressedTypedChannel<T> {
     pub async fn recv(&mut self) -> Result<T, Error> {
+        let bincode_config = self.bincode_config();
+
         loop {
             if self.recv_pos < self.recv_chunk.len() {
                 let mut reader = &self.recv_chunk[self.recv_pos..];
-                let msg = self.bincode_config.deserialize_from(&mut reader)?;
+                let msg = bincode_config.deserialize_from(&mut reader)?;
                 self.recv_pos = self.recv_chunk.len() - reader.len();
                 return Ok(msg);
             }
