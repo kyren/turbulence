@@ -143,35 +143,35 @@ fn test_message_channels() {
         // Now send some traffic across...
 
         // We're using the async `MessageChannels` API, but in a game you might use the sync API.
-        channels_a.async_send(Message1(42)).await;
+        channels_a.async_send(Message1(42)).await.unwrap();
         channels_a.flush::<Message1>();
-        assert_eq!(channels_b.async_recv::<Message1>().await.0, 42);
+        assert_eq!(channels_b.async_recv::<Message1>().await.unwrap().0, 42);
 
         // Since our underlying simulated network is perfect, our unreliable message will always
         // arrive.
-        channels_a.async_send(Message2(13)).await;
+        channels_a.async_send(Message2(13)).await.unwrap();
         channels_a.flush::<Message2>();
-        assert_eq!(channels_b.async_recv::<Message2>().await.0, 13);
+        assert_eq!(channels_b.async_recv::<Message2>().await.unwrap().0, 13);
 
         // Each message channel is independent of the others, and they all have their own
         // independent instances of message coalescing and reliability protocols.
 
-        channels_a.async_send(Message1(20)).await;
-        channels_a.async_send(Message2(30)).await;
-        channels_a.async_send(Message1(21)).await;
-        channels_a.async_send(Message2(31)).await;
-        channels_a.async_send(Message1(22)).await;
-        channels_a.async_send(Message2(32)).await;
+        channels_a.async_send(Message1(20)).await.unwrap();
+        channels_a.async_send(Message2(30)).await.unwrap();
+        channels_a.async_send(Message1(21)).await.unwrap();
+        channels_a.async_send(Message2(31)).await.unwrap();
+        channels_a.async_send(Message1(22)).await.unwrap();
+        channels_a.async_send(Message2(32)).await.unwrap();
         channels_a.flush::<Message1>();
         channels_a.flush::<Message2>();
 
-        assert_eq!(channels_b.async_recv::<Message1>().await.0, 20);
-        assert_eq!(channels_b.async_recv::<Message1>().await.0, 21);
-        assert_eq!(channels_b.async_recv::<Message1>().await.0, 22);
+        assert_eq!(channels_b.async_recv::<Message1>().await.unwrap().0, 20);
+        assert_eq!(channels_b.async_recv::<Message1>().await.unwrap().0, 21);
+        assert_eq!(channels_b.async_recv::<Message1>().await.unwrap().0, 22);
 
-        assert_eq!(channels_b.async_recv::<Message2>().await.0, 30);
-        assert_eq!(channels_b.async_recv::<Message2>().await.0, 31);
-        assert_eq!(channels_b.async_recv::<Message2>().await.0, 32);
+        assert_eq!(channels_b.async_recv::<Message2>().await.unwrap().0, 30);
+        assert_eq!(channels_b.async_recv::<Message2>().await.unwrap().0, 31);
+        assert_eq!(channels_b.async_recv::<Message2>().await.unwrap().0, 32);
 
         is_done_send.send(()).unwrap();
     });

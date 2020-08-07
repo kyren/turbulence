@@ -167,11 +167,15 @@ where
 pub struct MessageTypeUnregistered;
 
 #[derive(Debug, Error)]
-pub enum AsyncMessageError {
+#[error("`MessageChannels` instance has become disconnected")]
+pub struct MessageChannelsDisconnected;
+
+#[derive(Debug, Error)]
+pub enum TryAsyncMessageError {
     #[error(transparent)]
     Unregistered(#[from] MessageTypeUnregistered),
-    #[error("message channel has been disconnected")]
-    Disconnected,
+    #[error(transparent)]
+    Disconnected(#[from] MessageChannelsDisconnected),
 }
 
 /// Manages a set of channels through a packet multiplexer, where each channel is associated with
@@ -227,7 +231,8 @@ impl MessageChannels {
         self.try_send(message).unwrap()
     }
 
-    /// Like `MessageChannels::send` but errors instead of panicking.
+    /// Like `MessageChannels::send` but errors instead of panicking when the message type is
+    /// unregistered.
     pub fn try_send<M: ChannelMessage>(
         &mut self,
         message: M,
@@ -252,20 +257,27 @@ impl MessageChannels {
     /// to ensure delivery.
     ///
     /// # Panics
-    /// Panics if this message type is not registered, or if the channel task has panicked.
-    pub async fn async_send<M: ChannelMessage>(&mut self, message: M) {
-        self.try_async_send(message).await.unwrap()
+    /// Panics if this message type is not registered.
+    pub async fn async_send<M: ChannelMessage>(
+        &mut self,
+        message: M,
+    ) -> Result<(), MessageChannelsDisconnected> {
+        self.try_async_send(message).await.map_err(|e| match e {
+            TryAsyncMessageError::Unregistered(e) => panic!(e),
+            TryAsyncMessageError::Disconnected(e) => e,
+        })
     }
 
-    /// Like `MessageChannels::async_send` but errors instead of panicking.
+    /// Like `MessageChannels::async_send` but errors instead of panicking when the message type is
+    /// unregistered.
     pub async fn try_async_send<M: ChannelMessage>(
         &mut self,
         message: M,
-    ) -> Result<(), AsyncMessageError> {
+    ) -> Result<(), TryAsyncMessageError> {
         let channels = self.channels.get_mut::<M>()?;
 
         if self.disconnected {
-            Err(AsyncMessageError::Disconnected)
+            Err(MessageChannelsDisconnected.into())
         } else {
             let res = async {
                 future::poll_fn(|cx| channels.outgoing_sender.poll_ready(cx)).await?;
@@ -275,7 +287,7 @@ impl MessageChannels {
 
             if res.is_err() {
                 self.disconnected = true;
-                Err(AsyncMessageError::Disconnected)
+                Err(MessageChannelsDisconnected.into())
             } else {
                 Ok(())
             }
@@ -292,7 +304,8 @@ impl MessageChannels {
         self.try_flush::<M>().unwrap();
     }
 
-    /// Like `MessageChannels::flush` but errors instead of panicking.
+    /// Like `MessageChannels::flush` but errors instead of panicking when the message type is
+    /// unregistered.
     pub fn try_flush<M: ChannelMessage>(&mut self) -> Result<(), MessageTypeUnregistered> {
         self.channels.get_mut::<M>()?.flush_sender.signal();
         Ok(())
@@ -308,7 +321,8 @@ impl MessageChannels {
         self.try_recv().unwrap()
     }
 
-    /// Like `MessageChannels::recv` but errors instead of panicking.
+    /// Like `MessageChannels::recv` but errors instead of panicking when the message type is
+    /// unregistered.
     pub fn try_recv<M: ChannelMessage>(&mut self) -> Result<Option<M>, MessageTypeUnregistered> {
         let channels = self.channels.get_mut::<M>()?;
 
@@ -330,33 +344,39 @@ impl MessageChannels {
     /// associated with its message type but waits if there is no message available.
     ///
     /// # Panics
-    /// Panics if this message type is not registered, or if the channel task has panicked.
-    pub async fn async_recv<M: ChannelMessage>(&mut self) -> M {
-        self.try_async_recv().await.unwrap()
+    /// Panics if this message type is not registered.
+    pub async fn async_recv<M: ChannelMessage>(
+        &mut self,
+    ) -> Result<M, MessageChannelsDisconnected> {
+        self.try_async_recv().await.map_err(|e| match e {
+            TryAsyncMessageError::Unregistered(e) => panic!(e),
+            TryAsyncMessageError::Disconnected(e) => e,
+        })
     }
 
-    /// Like `MessageChannels::async_recv` but errors instead of panicking.
-    pub async fn try_async_recv<M: ChannelMessage>(&mut self) -> Result<M, AsyncMessageError> {
+    /// Like `MessageChannels::async_recv` but errors instead of panicking when the message type is
+    /// unregistered.
+    pub async fn try_async_recv<M: ChannelMessage>(&mut self) -> Result<M, TryAsyncMessageError> {
         let channels = self.channels.get_mut::<M>()?;
 
         if self.disconnected {
-            Err(AsyncMessageError::Disconnected)
+            Err(MessageChannelsDisconnected.into())
         } else if let Some(message) = channels.incoming_receiver.next().await {
             Ok(message)
         } else {
             self.disconnected = true;
-            Err(AsyncMessageError::Disconnected)
+            Err(MessageChannelsDisconnected.into())
         }
+    }
+
+    pub fn statistics<M: ChannelMessage>(&self) -> &ChannelStatistics {
+        self.try_statistics::<M>().unwrap()
     }
 
     pub fn try_statistics<M: ChannelMessage>(
         &self,
     ) -> Result<&ChannelStatistics, MessageTypeUnregistered> {
         Ok(&self.channels.get::<M>()?.statistics)
-    }
-
-    pub fn statistics<M: ChannelMessage>(&self) -> &ChannelStatistics {
-        self.try_statistics::<M>().unwrap()
     }
 }
 
