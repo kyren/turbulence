@@ -148,8 +148,9 @@ In the near future it might be useful to have other channel types that provide
 in-between guarantees like only reliability guarantees but not in-order
 guarantees or vice versa.
 
-Eventually, I'd like the reliable channel to actually attempt congestion control
-and avoidance.
+Eventually, I'd like the reliable channels to have some sort of congestion
+avoidance, but this would probably need to be cooperative between reliable
+channels in some way.
 
 The library desperately needs better examples, especially a fully worked example
 using e.g. tokio and UDP, but setting up such an example is a large task by
