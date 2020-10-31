@@ -1,15 +1,12 @@
 use std::{future::Future, time::Duration};
 
-use futures::Stream;
-
 /// Trait for async runtime functionality needed by `turbulence`.
 ///
 /// This is designed so that it can be implemented on multiple platforms with multiple runtimes,
 /// including `wasm32-unknown-unknown`, where `std::time::Instant` is unavailable.
 pub trait Runtime: Clone + Send + Sync {
     type Instant: Copy + Send + Sync;
-    type Delay: Future<Output = ()> + Unpin + Send;
-    type Interval: Stream<Item = Self::Instant> + Unpin + Send;
+    type Delay: Future<Output = ()> + Send;
 
     /// This is similar to the `futures::task::Spawn` trait, but it is generic in the spawned
     /// future, which is better for backends like tokio.
@@ -28,15 +25,11 @@ pub trait Runtime: Clone + Send + Sync {
 
     /// Create a future which resolves after the given time has passed.
     fn delay(&self, duration: Duration) -> Self::Delay;
-
-    /// Create a stream which produces values continuously at the given interval.
-    fn interval(&self, duration: Duration) -> Self::Interval;
 }
 
 impl<'a, R: Runtime> Runtime for &'a R {
     type Instant = R::Instant;
     type Delay = R::Delay;
-    type Interval = R::Interval;
 
     fn spawn<F>(&self, future: F)
     where
@@ -59,9 +52,5 @@ impl<'a, R: Runtime> Runtime for &'a R {
 
     fn delay(&self, duration: Duration) -> Self::Delay {
         (**self).delay(duration)
-    }
-
-    fn interval(&self, duration: Duration) -> Self::Interval {
-        (**self).interval(duration)
     }
 }

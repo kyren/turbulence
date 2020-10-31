@@ -98,7 +98,7 @@ impl ReliableChannel {
         assert!(settings.rtt_resend_factor > 0.);
 
         let (error_sender, error_receiver) = oneshot::channel();
-        let wakeup_timer = runtime.interval(settings.wakeup_time);
+        let wakeup_timer = Box::pin(runtime.delay(settings.wakeup_time).fuse());
 
         let shared = Arc::new(Mutex::new(Shared {
             send_window: SendWindow::new(settings.send_window_size, Wrapping(0)),
@@ -254,7 +254,7 @@ where
     incoming: mpsc::Receiver<P::Packet>,
     outgoing: mpsc::Sender<P::Packet>,
 
-    wakeup_timer: R::Interval,
+    wakeup_timer: Pin<Box<Fuse<R::Delay>>>,
     remote_recv_available: u32,
     unacked_ranges: HashMap<StreamPos, UnackedRange<R::Instant>>,
     rtt_estimate: f64,
@@ -281,7 +281,9 @@ where
                 let wakeup_timer = &mut self.wakeup_timer;
 
                 let wakeup_timer = async {
-                    wakeup_timer.next().await;
+                    if !wakeup_timer.is_terminated() {
+                        wakeup_timer.await;
+                    }
                     // Don't bother waking up for the wakeup timer until we have bandwidth available
                     // to do resends.
                     bandwidth_limiter.delay_until_available().await;
@@ -335,6 +337,7 @@ where
                     self.resend(&mut *shared).await?;
                     // We send any pending data on wakeups as a form of Nagle-ing
                     self.send(&mut *shared).await?;
+                    self.wakeup_timer.set(self.runtime.delay(self.settings.wakeup_time).fuse());
                 }
                 WakeReason::IncomingPacket(packet) => {
                     let mut shared = shared.lock().await;

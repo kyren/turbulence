@@ -148,7 +148,6 @@ async fn do_delay(state: Arc<HandleInner>, duration: Duration) -> u64 {
 impl Runtime for SimpleRuntimeHandle {
     type Instant = u64;
     type Delay = Pin<Box<dyn Future<Output = ()> + Send>>;
-    type Interval = Pin<Box<dyn Stream<Item = u64> + Send>>;
 
     fn spawn<F: Future<Output = ()> + Send + 'static>(&self, f: F) {
         self.0.incoming_tasks.lock().unwrap().push(Box::pin(f))
@@ -171,16 +170,6 @@ impl Runtime for SimpleRuntimeHandle {
         Box::pin(async move {
             do_delay(state, duration).await;
         })
-    }
-
-    fn interval(&self, duration: Duration) -> Self::Interval {
-        Box::pin(stream::unfold(
-            Arc::clone(&self.0),
-            move |state| async move {
-                let time = do_delay(Arc::clone(&state), duration).await;
-                Some((time, state))
-            },
-        ))
     }
 }
 
