@@ -35,7 +35,7 @@ pub enum Error {
     Shutdown,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug, Clone)]
 pub struct Settings {
     /// The target outgoing bandwidth, in bytes / sec.
     ///

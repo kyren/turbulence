@@ -24,7 +24,7 @@ pub fn stream_ge(a: &StreamPos, b: &StreamPos) -> bool {
     stream_cmp(a, b) != Ordering::Less
 }
 
-#[derive(PartialEq, Eq, Debug)]
+#[derive(Debug, Eq, PartialEq)]
 pub enum AckResult {
     /// This range was not found
     NotFound,

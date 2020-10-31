@@ -59,7 +59,7 @@ where
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug, Clone)]
 pub struct MuxPacketPool<P>(P);
 
 impl<P> MuxPacketPool<P> {
@@ -91,13 +91,13 @@ impl<P> From<P> for MuxPacketPool<P> {
 #[error("packet channel has already been opened")]
 pub struct DuplicateChannel;
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Debug, Copy, Clone)]
 pub struct ChannelTotals {
     pub packets: u64,
     pub bytes: u64,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug, Clone)]
 pub struct ChannelStatistics(Arc<ChannelStatisticsData>);
 
 impl ChannelStatistics {

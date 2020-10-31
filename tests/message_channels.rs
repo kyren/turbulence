@@ -68,13 +68,13 @@ fn test_message_channels() {
     // side.  They should both have exactly the same message types registered.
 
     let mut multiplexer_a = PacketMultiplexer::new();
-    let mut builder_a = MessageChannelsBuilder::new(runtime.handle(), pool.clone());
+    let mut builder_a = MessageChannelsBuilder::new(runtime.handle(), pool);
     builder_a.register::<Message1>(MESSAGE1_SETTINGS).unwrap();
     builder_a.register::<Message2>(MESSAGE2_SETTINGS).unwrap();
     let mut channels_a = builder_a.build(&mut multiplexer_a);
 
     let mut multiplexer_b = PacketMultiplexer::new();
-    let mut builder_b = MessageChannelsBuilder::new(runtime.handle(), pool.clone());
+    let mut builder_b = MessageChannelsBuilder::new(runtime.handle(), pool);
     builder_b.register::<Message1>(MESSAGE1_SETTINGS).unwrap();
     builder_b.register::<Message2>(MESSAGE2_SETTINGS).unwrap();
     let mut channels_b = builder_b.build(&mut multiplexer_b);

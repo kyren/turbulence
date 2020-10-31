@@ -25,7 +25,7 @@ use turbulence::{
     runtime::Runtime,
 };
 
-#[derive(Clone, Debug)]
+#[derive(Debug, Copy, Clone)]
 pub struct SimpleBufferPool(pub usize);
 
 impl BufferPool for SimpleBufferPool {

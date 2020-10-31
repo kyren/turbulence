@@ -38,7 +38,7 @@ pub fn channel() -> (Sender, Receiver) {
     (Sender(sender_state), Receiver(state))
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug, Clone)]
 pub struct Sender(Arc<State>);
 
 impl Sender {

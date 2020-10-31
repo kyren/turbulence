@@ -10,7 +10,7 @@ pub trait BufferPool {
 }
 
 /// Turns a `BufferPool` implementation into something that implements `PacketPool`.
-#[derive(Clone, Debug, Default)]
+#[derive(Debug, Copy, Clone, Default)]
 pub struct BufferPacketPool<B>(B);
 
 impl<B> BufferPacketPool<B> {
