@@ -6,7 +6,7 @@ use std::{future::Future, time::Duration};
 /// including `wasm32-unknown-unknown`, where `std::time::Instant` is unavailable.
 pub trait Runtime: Clone + Send + Sync {
     type Instant: Copy + Send + Sync;
-    type Delay: Future<Output = ()> + Send;
+    type Sleep: Future<Output = ()> + Send;
 
     /// This is similar to the `futures::task::Spawn` trait, but it is generic in the spawned
     /// future, which is better for backends like tokio.
@@ -24,12 +24,12 @@ pub trait Runtime: Clone + Send + Sync {
     fn duration_between(&self, earlier: Self::Instant, later: Self::Instant) -> Duration;
 
     /// Create a future which resolves after the given time has passed.
-    fn delay(&self, duration: Duration) -> Self::Delay;
+    fn sleep(&self, duration: Duration) -> Self::Sleep;
 }
 
 impl<'a, R: Runtime> Runtime for &'a R {
     type Instant = R::Instant;
-    type Delay = R::Delay;
+    type Sleep = R::Sleep;
 
     fn spawn<F>(&self, future: F)
     where
@@ -50,7 +50,7 @@ impl<'a, R: Runtime> Runtime for &'a R {
         (**self).duration_between(earlier, later)
     }
 
-    fn delay(&self, duration: Duration) -> Self::Delay {
-        (**self).delay(duration)
+    fn sleep(&self, duration: Duration) -> Self::Sleep {
+        (**self).sleep(duration)
     }
 }

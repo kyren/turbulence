@@ -147,7 +147,7 @@ async fn do_delay(state: Arc<HandleInner>, duration: Duration) -> u64 {
 
 impl Runtime for SimpleRuntimeHandle {
     type Instant = u64;
-    type Delay = Pin<Box<dyn Future<Output = ()> + Send>>;
+    type Sleep = Pin<Box<dyn Future<Output = ()> + Send>>;
 
     fn spawn<F: Future<Output = ()> + Send + 'static>(&self, f: F) {
         self.0.incoming_tasks.lock().unwrap().push(Box::pin(f))
@@ -165,7 +165,7 @@ impl Runtime for SimpleRuntimeHandle {
         Duration::from_millis(later - earlier)
     }
 
-    fn delay(&self, duration: Duration) -> Self::Delay {
+    fn sleep(&self, duration: Duration) -> Self::Sleep {
         let state = Arc::clone(&self.0);
         Box::pin(async move {
             do_delay(state, duration).await;
@@ -210,7 +210,7 @@ pub fn condition_link<P>(
                                     let mut dup_packet = pool.acquire();
                                     dup_packet.extend(&packet[..]);
                                     async move {
-                                        runtime.delay(delay).await;
+                                        runtime.sleep(delay).await;
                                         let _ = outgoing.send(dup_packet).await;
                                     }
                                 });
@@ -224,7 +224,7 @@ pub fn condition_link<P>(
                                         + rng.gen::<f64>() * condition.jitter.as_secs_f64(),
                                 );
                                 async move {
-                                    runtime.delay(delay).await;
+                                    runtime.sleep(delay).await;
                                     let _ = outgoing.send(packet).await;
                                 }
                             });

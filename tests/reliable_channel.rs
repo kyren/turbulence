@@ -101,7 +101,7 @@ fn test_reliable_stream() {
                 }
 
                 if c < SEND_DELAY_NEAR && c + len > SEND_DELAY_NEAR {
-                    runtime_handle.delay(Duration::from_secs(1)).await;
+                    runtime_handle.sleep(Duration::from_secs(1)).await;
                 }
 
                 c += len;
@@ -133,7 +133,7 @@ fn test_reliable_stream() {
                 }
 
                 if c < RECV_DELAY_NEAR && c + len >= RECV_DELAY_NEAR {
-                    runtime_handle.delay(Duration::from_secs(2)).await;
+                    runtime_handle.sleep(Duration::from_secs(2)).await;
                 }
 
                 c += len;
