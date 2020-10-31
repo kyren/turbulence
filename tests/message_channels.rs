@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use turbulence::{
     buffer::BufferPacketPool,
     message_channels::{MessageChannelMode, MessageChannelSettings, MessageChannelsBuilder},
-    packet_multiplexer::{MuxPacketPool, PacketMultiplexer},
+    packet_multiplexer::{PacketMultiplexer},
     reliable_channel,
     runtime::Runtime,
 };
@@ -62,7 +62,7 @@ const MESSAGE2_SETTINGS: MessageChannelSettings = MessageChannelSettings {
 #[test]
 fn test_message_channels() {
     let mut runtime = SimpleRuntime::new();
-    let pool = MuxPacketPool::new(BufferPacketPool::new(SimpleBufferPool(32)));
+    let pool = BufferPacketPool::new(SimpleBufferPool(32));
 
     // Set up two packet multiplexers, one for our sending "A" side and one for our receiving "B"
     // side.  They should both have exactly the same message types registered.
