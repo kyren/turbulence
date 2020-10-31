@@ -1,3 +1,15 @@
+## [0.3]
+- Fix the message_channels test to be less confusing, this is very important as
+  it is currently the best (hah) example.
+- Make `BufferPacketPool` derive Copy if the type it wraps is Copy.
+- Simplify `Runtime` trait to not require an explicit `Interval`.
+  `Runtime::Delay` wasn't even *used* prior to this, but it is the only timing
+  requirement now and has been renamed to `Sleep` to match tokio 0.3.  Neither
+  tokio nor smol allocate as part of creating a `Sleep` / `Timer`, so having an
+  explicit `Interval` is not really necessary to avoid e.g. allocation, and the
+  way tokio's `Interval` works was not ideal anyway and we shouldn't rely on how
+  it is implemented.
+
 ## [0.2]
 - Correctness fixes for unreliable message lengths
 - Performance improvements for bincode message serialization
