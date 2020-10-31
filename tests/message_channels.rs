@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use turbulence::{
     buffer::BufferPacketPool,
     message_channels::{MessageChannelMode, MessageChannelSettings, MessageChannelsBuilder},
-    packet_multiplexer::{PacketMultiplexer},
+    packet_multiplexer::PacketMultiplexer,
     reliable_channel,
     runtime::Runtime,
 };
