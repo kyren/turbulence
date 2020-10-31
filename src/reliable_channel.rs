@@ -337,7 +337,8 @@ where
                     self.resend(&mut *shared).await?;
                     // We send any pending data on wakeups as a form of Nagle-ing
                     self.send(&mut *shared).await?;
-                    self.wakeup_timer.set(self.runtime.sleep(self.settings.wakeup_time).fuse());
+                    self.wakeup_timer
+                        .set(self.runtime.sleep(self.settings.wakeup_time).fuse());
                 }
                 WakeReason::IncomingPacket(packet) => {
                     let mut shared = shared.lock().await;
