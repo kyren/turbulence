@@ -51,11 +51,9 @@ async fn open_socket(
     let pool = BufferPacketPool::new(SimpleBufferPool(pool_size));
     let mut sockets_incoming = HashMap::with_capacity(100);
 
-    let socket = smol::block_on(async {
-        smol::net::UdpSocket::bind(my_addr)
-            .await
-            .expect("couldn't bind to address")
-    });
+    let socket = smol::net::UdpSocket::bind(my_addr)
+        .await
+        .expect("couldn't bind to address");
 
     loop {
         let mut packet = comn::acquire_max(&pool);
