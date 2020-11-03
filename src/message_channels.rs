@@ -410,30 +410,10 @@ struct BoxedChannel {
     channel_set: Box<dyn Any + Send + Sync>,
     flush_sender: event_watch::Sender,
     statistics: ChannelStatistics,
-    #[cfg(debug_assertions)]
-    /// Allows for an error message which knows what type was expected
-    type_id: TypeId,
 }
 
 impl BoxedChannel {
-    fn new<M: ChannelMessage>(
-        set: ChannelSet<M>,
-        flush_sender: event_watch::Sender,
-        statistics: ChannelStatistics
-    ) -> Self {
-        Self {
-            channel_set: Box::new(set),
-            flush_sender,
-            statistics,
-            #[cfg(debug_assertions)]
-            type_id: TypeId::of::<M>(),
-        }
-    }
-
     fn channel_set_mut<M: ChannelMessage>(&mut self) -> &mut ChannelSet<M> {
-        #[cfg(debug_assertions)]
-        assert_eq!(self.type_id, TypeId::of::<M>(), "type mismatch!");
-
         self.channel_set.downcast_mut().unwrap()
     }
 }
@@ -626,14 +606,14 @@ where
         }
     };
 
-    channels_map.insert::<M>(BoxedChannel::new(
-        ChannelSet {
+    channels_map.insert::<M>(BoxedChannel {
+        channel_set: Box::new(ChannelSet {
             outgoing_sender: outgoing_message_sender,
             incoming_receiver: incoming_message_receiver,
-        },
+        }),
         flush_sender,
         statistics,
-    ));
+    });
 
     channel_task
 }
