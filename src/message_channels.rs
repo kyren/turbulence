@@ -237,11 +237,11 @@ impl MessageChannels {
         &mut self,
         message: M,
     ) -> Result<Option<M>, MessageTypeUnregistered> {
-        let channels = self.channels.get_mut::<M>()?;
+        let channel_set = self.channels.channel_set_mut::<M>()?;
 
         Ok(if self.disconnected {
             Some(message)
-        } else if let Err(err) = channels.outgoing_sender.try_send(message) {
+        } else if let Err(err) = channel_set.outgoing_sender.try_send(message) {
             if err.is_disconnected() {
                 self.disconnected = true;
             }
@@ -274,14 +274,14 @@ impl MessageChannels {
         &mut self,
         message: M,
     ) -> Result<(), TryAsyncMessageError> {
-        let channels = self.channels.get_mut::<M>()?;
+        let channel_set = self.channels.channel_set_mut::<M>()?;
 
         if self.disconnected {
             Err(MessageChannelsDisconnected.into())
         } else {
             let res = async {
-                future::poll_fn(|cx| channels.outgoing_sender.poll_ready(cx)).await?;
-                channels.outgoing_sender.start_send(message)
+                future::poll_fn(|cx| channel_set.outgoing_sender.poll_ready(cx)).await?;
+                channel_set.outgoing_sender.start_send(message)
             }
             .await;
 
@@ -311,6 +311,14 @@ impl MessageChannels {
         Ok(())
     }
 
+    /// Immediately send any buffered messages of all registered message types. Messages may not
+    /// be delivered unless `flush` is called after any `send` calls.
+    pub fn flush_all(&mut self) {
+        for channel in &mut self.channels.0.values_mut() {
+            channel.flush_sender.signal();
+        }
+    }
+
     /// Receive an incoming message on the channel associated with this mesage type, if one is
     /// available.
     ///
@@ -324,12 +332,12 @@ impl MessageChannels {
     /// Like `MessageChannels::recv` but errors instead of panicking when the message type is
     /// unregistered.
     pub fn try_recv<M: ChannelMessage>(&mut self) -> Result<Option<M>, MessageTypeUnregistered> {
-        let channels = self.channels.get_mut::<M>()?;
+        let channel_set = self.channels.channel_set_mut::<M>()?;
 
         Ok(if self.disconnected {
             None
         } else {
-            match channels.incoming_receiver.try_next() {
+            match channel_set.incoming_receiver.try_next() {
                 Ok(None) => {
                     self.disconnected = true;
                     None
@@ -357,11 +365,11 @@ impl MessageChannels {
     /// Like `MessageChannels::async_recv` but errors instead of panicking when the message type is
     /// unregistered.
     pub async fn try_async_recv<M: ChannelMessage>(&mut self) -> Result<M, TryAsyncMessageError> {
-        let channels = self.channels.get_mut::<M>()?;
+        let channel_set = self.channels.channel_set_mut::<M>()?;
 
         if self.disconnected {
             Err(MessageChannelsDisconnected.into())
-        } else if let Some(message) = channels.incoming_receiver.next().await {
+        } else if let Some(message) = channel_set.incoming_receiver.next().await {
             Ok(message)
         } else {
             self.disconnected = true;
@@ -395,38 +403,63 @@ struct ChannelDisconnected;
 struct ChannelSet<M> {
     outgoing_sender: mpsc::Sender<M>,
     incoming_receiver: mpsc::Receiver<M>,
+}
+
+#[derive(Debug)]
+struct BoxedChannel {
+    channel_set: Box<dyn Any + Send + Sync>,
     flush_sender: event_watch::Sender,
     statistics: ChannelStatistics,
+    #[cfg(debug_assertions)]
+    /// Allows for an error message which knows what type was expected
+    type_id: TypeId,
+}
+
+impl BoxedChannel {
+    fn new<M: ChannelMessage>(
+        set: ChannelSet<M>,
+        flush_sender: event_watch::Sender,
+        statistics: ChannelStatistics
+    ) -> Self {
+        Self {
+            channel_set: Box::new(set),
+            flush_sender,
+            statistics,
+            #[cfg(debug_assertions)]
+            type_id: TypeId::of::<M>(),
+        }
+    }
+
+    fn channel_set_mut<M: ChannelMessage>(&mut self) -> &mut ChannelSet<M> {
+        #[cfg(debug_assertions)]
+        assert_eq!(self.type_id, TypeId::of::<M>(), "type mismatch!");
+
+        self.channel_set.downcast_mut().unwrap()
+    }
 }
 
 #[derive(Debug, Default)]
-struct ChannelsMap(HashMap<TypeId, Box<dyn Any + Send + Sync>>);
+struct ChannelsMap(HashMap<TypeId, BoxedChannel>);
 
 impl ChannelsMap {
-    fn insert<M: ChannelMessage>(&mut self, channel_set: ChannelSet<M>) -> bool {
-        self.0
-            .insert(TypeId::of::<M>(), Box::new(channel_set))
-            .is_none()
+    fn insert<M: ChannelMessage>(&mut self, channel: BoxedChannel) -> bool {
+        self.0.insert(TypeId::of::<M>(), channel).is_none()
     }
 
-    fn get<M: ChannelMessage>(&self) -> Result<&ChannelSet<M>, MessageTypeUnregistered> {
-        Ok(self
-            .0
-            .get(&TypeId::of::<M>())
-            .ok_or(MessageTypeUnregistered)?
-            .downcast_ref()
-            .unwrap())
+    fn get<M: ChannelMessage>(&self) -> Result<&BoxedChannel, MessageTypeUnregistered> {
+        self.0.get(&TypeId::of::<M>()).ok_or(MessageTypeUnregistered)
     }
 
     fn get_mut<M: ChannelMessage>(
         &mut self,
+    ) -> Result<&mut BoxedChannel, MessageTypeUnregistered> {
+        self.0.get_mut(&TypeId::of::<M>()).ok_or(MessageTypeUnregistered)
+    }
+
+    fn channel_set_mut<M: ChannelMessage>(
+        &mut self,
     ) -> Result<&mut ChannelSet<M>, MessageTypeUnregistered> {
-        Ok(self
-            .0
-            .get_mut(&TypeId::of::<M>())
-            .ok_or(MessageTypeUnregistered)?
-            .downcast_mut()
-            .unwrap())
+        Ok(self.get_mut::<M>()?.channel_set_mut())
     }
 }
 
@@ -593,12 +626,14 @@ where
         }
     };
 
-    channels_map.insert(ChannelSet::<M> {
-        outgoing_sender: outgoing_message_sender,
-        flush_sender: flush_sender,
-        incoming_receiver: incoming_message_receiver,
+    channels_map.insert::<M>(BoxedChannel::new(
+        ChannelSet {
+            outgoing_sender: outgoing_message_sender,
+            incoming_receiver: incoming_message_receiver,
+        },
+        flush_sender,
         statistics,
-    });
+    ));
 
     channel_task
 }
