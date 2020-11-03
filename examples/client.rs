@@ -30,7 +30,7 @@ fn main() {
     }
 }
 
-// Spawns a background thread that turns command line input into events send down a smol::channel.
+// Spawns a background task that turns command line input into events send down a smol::channel.
 // Checking for events from the Receiver this returns allows us to simulate polling for keyboard
 // inputs every frame without pulling in any dependencies.
 fn message_input_channel() -> smol::channel::Receiver<String> {
