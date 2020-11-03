@@ -32,7 +32,7 @@ fn main() {
                 };
 
                 // if .recv() didn't require &mut, I could loop over all the channels
-                // again here and send the message to everyone. Instead, I'll just 
+                // again here and send the message to everyone. Instead, I'll just
                 // reply only to the person who sent the message.
                 if let Some(Chat(rejected)) = channel.send(Chat(response)) {
                     println!("couldn't send chat message: {}", rejected)
