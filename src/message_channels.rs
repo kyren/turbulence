@@ -427,13 +427,15 @@ impl ChannelsMap {
     }
 
     fn get<M: ChannelMessage>(&self) -> Result<&BoxedChannel, MessageTypeUnregistered> {
-        self.0.get(&TypeId::of::<M>()).ok_or(MessageTypeUnregistered)
+        self.0
+            .get(&TypeId::of::<M>())
+            .ok_or(MessageTypeUnregistered)
     }
 
-    fn get_mut<M: ChannelMessage>(
-        &mut self,
-    ) -> Result<&mut BoxedChannel, MessageTypeUnregistered> {
-        self.0.get_mut(&TypeId::of::<M>()).ok_or(MessageTypeUnregistered)
+    fn get_mut<M: ChannelMessage>(&mut self) -> Result<&mut BoxedChannel, MessageTypeUnregistered> {
+        self.0
+            .get_mut(&TypeId::of::<M>())
+            .ok_or(MessageTypeUnregistered)
     }
 
     fn channel_set_mut<M: ChannelMessage>(
