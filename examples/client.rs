@@ -1,5 +1,7 @@
-use comn::Chat;
 use turbulence::MessageChannels;
+
+mod comn;
+use comn::Chat;
 
 fn main() {
     let mut channel = direct_socket(comn::CLIENT, comn::SERVER, 1024);

@@ -1,6 +1,8 @@
 use std::sync::mpsc::{sync_channel, SyncSender};
-use comn::Chat;
 use turbulence::MessageChannels;
+
+mod comn;
+use comn::Chat;
 
 fn main() {
     // Note that some of these clients may very well have long ago disconnected. In order to determine
