@@ -55,9 +55,9 @@ pub struct Settings {
     /// controls the amount past the recv window which will be sent, and also the initial amount of
     /// data that will be sent when the connection starts up.
     pub init_send: u32,
-    /// The transmission task for the channel will wake up at this rate to do resends and as a Nagle
-    /// timer.
-    pub wakeup_time: Duration,
+    /// The transmission task for the channel will wake up at this rate to do resends, if not woken
+    /// up to send other data.
+    pub resend_time: Duration,
     /// The initial estimate for the RTT.
     pub initial_rtt: Duration,
     /// The maximum reasonable RTT which will be used as an upper bound for packet RTT values.
@@ -98,7 +98,7 @@ impl ReliableChannel {
         assert!(settings.rtt_resend_factor > 0.);
 
         let (error_sender, error_receiver) = oneshot::channel();
-        let wakeup_timer = Box::pin(runtime.sleep(settings.wakeup_time).fuse());
+        let resend_timer = Box::pin(runtime.sleep(settings.resend_time).fuse());
 
         let shared = Arc::new(Mutex::new(Shared {
             send_window: SendWindow::new(settings.send_window_size, Wrapping(0)),
@@ -123,7 +123,7 @@ impl ReliableChannel {
             packet_pool,
             incoming,
             outgoing,
-            wakeup_timer,
+            resend_timer,
             remote_recv_available,
             unacked_ranges: HashMap::new(),
             rtt_estimate,
@@ -146,8 +146,7 @@ impl ReliableChannel {
     /// been written.
     ///
     /// In order to ensure that data is written to the channel in a timely manner,
-    /// `ReliableChannel::flush` must be called.  Without calling `ReliableChannel::flush`, any
-    /// pending writes will not be sent until the next send task wakeup.
+    /// `ReliableChannel::flush` must be called.
     pub async fn write(&mut self, data: &[u8]) -> Result<usize, Error> {
         if self.task_error.is_terminated() {
             return Err(Error::Shutdown);
@@ -254,7 +253,7 @@ where
     incoming: mpsc::Receiver<P::Packet>,
     outgoing: mpsc::Sender<P::Packet>,
 
-    wakeup_timer: Pin<Box<Fuse<R::Sleep>>>,
+    resend_timer: Pin<Box<Fuse<R::Sleep>>>,
     remote_recv_available: u32,
     unacked_ranges: HashMap<StreamPos, UnackedRange<R::Instant>>,
     rtt_estimate: f64,
@@ -269,7 +268,7 @@ where
     async fn main_loop(mut self, shared: Arc<Mutex<Shared>>) -> Result<(), Error> {
         loop {
             enum WakeReason<'a, P> {
-                WakeupTimer,
+                ResendTimer,
                 IncomingPacket(P),
                 SendAvailable(MutexGuard<'a, Shared>),
             }
@@ -278,18 +277,18 @@ where
 
             let wake_reason = {
                 let bandwidth_limiter = &self.bandwidth_limiter;
-                let wakeup_timer = &mut self.wakeup_timer;
+                let resend_timer = &mut self.resend_timer;
 
-                let wakeup_timer = async {
-                    if !wakeup_timer.is_terminated() {
-                        wakeup_timer.await;
+                let resend_timer = async {
+                    if !resend_timer.is_terminated() {
+                        resend_timer.await;
                     }
-                    // Don't bother waking up for the wakeup timer until we have bandwidth available
+                    // Don't bother waking up for the resend timer until we have bandwidth available
                     // to do resends.
                     bandwidth_limiter.delay_until_available().await;
                 }
                 .fuse();
-                pin_mut!(wakeup_timer);
+                pin_mut!(resend_timer);
 
                 let remote_recv_available = self.remote_recv_available;
                 let send_available = async {
@@ -321,7 +320,7 @@ where
                 pin_mut!(send_available);
 
                 select! {
-                    _ = wakeup_timer => WakeReason::WakeupTimer,
+                    _ = resend_timer => WakeReason::ResendTimer,
                     incoming_packet = self.incoming.next() => {
                         WakeReason::IncomingPacket(incoming_packet.ok_or(Error::Disconnected)?)
                     },
@@ -332,13 +331,11 @@ where
             self.bandwidth_limiter.update_available();
 
             match wake_reason {
-                WakeReason::WakeupTimer => {
+                WakeReason::ResendTimer => {
                     let mut shared = shared.lock().await;
                     self.resend(&mut *shared).await?;
-                    // We send any pending data on wakeups as a form of Nagle-ing
-                    self.send(&mut *shared).await?;
-                    self.wakeup_timer
-                        .set(self.runtime.sleep(self.settings.wakeup_time).fuse());
+                    self.resend_timer
+                        .set(self.runtime.sleep(self.settings.resend_time).fuse());
                 }
                 WakeReason::IncomingPacket(packet) => {
                     let mut shared = shared.lock().await;
@@ -348,6 +345,9 @@ where
                     // We should use available bandwidth for resends before sending, to avoid
                     // starving resends
                     self.resend(&mut *shared).await?;
+                    self.resend_timer
+                        .set(self.runtime.sleep(self.settings.resend_time).fuse());
+
                     self.send(&mut *shared).await?;
                 }
             }

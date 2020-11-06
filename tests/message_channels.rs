@@ -35,7 +35,7 @@ const MESSAGE1_SETTINGS: MessageChannelSettings = MessageChannelSettings {
             send_window_size: 1024,
             burst_bandwidth: 1024,
             init_send: 512,
-            wakeup_time: Duration::from_millis(100),
+            resend_time: Duration::from_millis(100),
             initial_rtt: Duration::from_millis(200),
             max_rtt: Duration::from_secs(2),
             rtt_update_factor: 0.1,

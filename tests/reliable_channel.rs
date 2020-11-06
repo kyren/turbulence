@@ -21,7 +21,7 @@ fn test_reliable_stream() {
         send_window_size: 16384,
         burst_bandwidth: 4096,
         init_send: 512,
-        wakeup_time: Duration::from_millis(50),
+        resend_time: Duration::from_millis(50),
         initial_rtt: Duration::from_millis(100),
         max_rtt: Duration::from_millis(2000),
         rtt_update_factor: 0.1,

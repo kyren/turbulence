@@ -22,7 +22,7 @@ fn test_compressed_typed_channel() {
         send_window_size: 512,
         burst_bandwidth: 512,
         init_send: 256,
-        wakeup_time: Duration::from_millis(50),
+        resend_time: Duration::from_millis(50),
         initial_rtt: Duration::from_millis(100),
         max_rtt: Duration::from_millis(2000),
         rtt_update_factor: 0.1,
