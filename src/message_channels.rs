@@ -474,7 +474,7 @@ where
                         select! {
                             incoming = channel.recv().fuse() => Next::Incoming(incoming?),
                             outgoing = outgoing_message_receiver.next().fuse() => Next::Outgoing(outgoing.ok_or(ChannelDisconnected)?),
-                            flush = flush_receiver.wait().fuse() => Next::Flush,
+                            _ = flush_receiver.wait().fuse() => Next::Flush,
                         }
                     };
 
@@ -520,7 +520,7 @@ where
                             outgoing = outgoing_message_receiver.next().fuse() => {
                                 Next::Outgoing(outgoing.ok_or(ChannelDisconnected)?)
                             }
-                            flush = flush_receiver.wait().fuse() => Next::Flush,
+                            _ = flush_receiver.wait().fuse() => Next::Flush,
                         }
                     };
 
@@ -566,7 +566,7 @@ where
                             outgoing = outgoing_message_receiver.next().fuse() => {
                                 Next::Outgoing(outgoing.ok_or(ChannelDisconnected)?)
                             }
-                            flush = flush_receiver.wait().fuse() => Next::Flush,
+                            _ = flush_receiver.wait().fuse() => Next::Flush,
                         }
                     };
 
