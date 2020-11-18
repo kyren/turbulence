@@ -4,7 +4,7 @@ use std::ops::{Deref, DerefMut};
 ///
 /// It is not useful for an implementation of `PacketPool` to return packets with larger capacity
 /// than this, `turbulence` may not be able to use the entire packet capacity otherwise.
-pub const MAX_PACKET_LEN: usize = 32768;
+pub const MAX_PACKET_LEN: u16 = 32768;
 
 /// A trait for packet buffers used by `turbulence`.
 pub trait Packet: Deref<Target = [u8]> + DerefMut {

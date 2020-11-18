@@ -5,7 +5,7 @@ use rand::{rngs::SmallRng, thread_rng, RngCore, SeedableRng};
 
 use turbulence::{
     buffer::BufferPacketPool,
-    compressed_typed_channel::CompressedTypedChannel,
+    compressed_bincode_channel::CompressedBincodeChannel,
     reliable_channel::{ReliableChannel, Settings},
     runtime::Runtime,
 };
@@ -15,7 +15,7 @@ mod util;
 use self::util::{condition_link, LinkCondition, SimpleBufferPool, SimpleRuntime};
 
 #[test]
-fn test_compressed_typed_channel() {
+fn test_compressed_bincode_channel() {
     const SETTINGS: Settings = Settings {
         bandwidth: 2048,
         recv_window_size: 512,
@@ -61,7 +61,7 @@ fn test_compressed_typed_channel() {
         bcondsend,
     );
 
-    let mut stream1 = CompressedTypedChannel::<Vec<u8>>::new(
+    let mut stream1 = CompressedBincodeChannel::new(
         ReliableChannel::new(
             runtime.handle(),
             packet_pool.clone(),
@@ -71,7 +71,7 @@ fn test_compressed_typed_channel() {
         ),
         1024,
     );
-    let mut stream2 = CompressedTypedChannel::<Vec<u8>>::new(
+    let mut stream2 = CompressedBincodeChannel::new(
         ReliableChannel::new(
             runtime.handle(),
             packet_pool.clone(),
@@ -92,7 +92,7 @@ fn test_compressed_typed_channel() {
             stream1.flush().await.unwrap();
 
             for i in 0..100 {
-                let recv_val = stream1.recv().await.unwrap();
+                let recv_val = stream1.recv::<Vec<u8>>().await.unwrap();
                 assert_eq!(recv_val.len(), i + 17);
             }
 
@@ -104,7 +104,7 @@ fn test_compressed_typed_channel() {
     runtime.spawn({
         async move {
             for i in 0..100 {
-                let recv_val = stream2.recv().await.unwrap();
+                let recv_val = stream2.recv::<Vec<u8>>().await.unwrap();
                 assert_eq!(recv_val, vec![i as u8 + 13; i + 25].as_slice());
             }
 

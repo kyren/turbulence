@@ -12,7 +12,7 @@ use crate::packet::{Packet, PacketPool, MAX_PACKET_LEN};
 
 /// The maximum possible message length of an `UnreliableChannel` message, based on the
 /// `MAX_PACKET_LEN`.
-pub const MAX_MESSAGE_LEN: usize = MAX_PACKET_LEN - 2;
+pub const MAX_MESSAGE_LEN: u16 = MAX_PACKET_LEN - 2;
 
 #[derive(Debug, Error)]
 pub enum SendError {

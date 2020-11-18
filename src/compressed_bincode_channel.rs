@@ -20,9 +20,6 @@ pub enum Error {
     SnapError(#[from] snap::Error),
 }
 
-/// The maximum supported length for a message chunk sent over a `CompressedTypedChannel`.
-pub const MAX_CHUNK_LEN: usize = u16::MAX as usize + 1;
-
 /// Wraps a `ReliableMessageChannel` and reliably sends a single message type serialized with
 /// `bincode` and compressed with `snap`.
 ///
@@ -32,9 +29,9 @@ pub const MAX_CHUNK_LEN: usize = u16::MAX as usize + 1;
 ///
 /// This saves space from the compression and also from the reduced message header overhead per
 /// individual message.
-pub struct CompressedTypedChannel<T> {
+pub struct CompressedBincodeChannel {
     channel: ReliableChannel,
-    max_chunk_len: usize,
+    max_chunk_len: u16,
 
     send_chunk: Vec<u8>,
 
@@ -49,19 +46,15 @@ pub struct CompressedTypedChannel<T> {
 
     encoder: SnapEncoder,
     decoder: SnapDecoder,
-
-    _phantom: PhantomData<T>,
 }
 
-impl<T> CompressedTypedChannel<T> {
+impl CompressedBincodeChannel {
     /// The `max_chunk_len` parameter describes the maximum buffer size of a combined message block
     /// before it is automatically sent.
     ///
     /// An individual message may be no more than `max_chunk_len` in length.
-    pub fn new(channel: ReliableChannel, max_chunk_len: usize) -> Self {
-        assert!(max_chunk_len > 1);
-        assert!(max_chunk_len <= MAX_CHUNK_LEN as usize);
-        CompressedTypedChannel {
+    pub fn new(channel: ReliableChannel, max_chunk_len: u16) -> Self {
+        CompressedBincodeChannel {
             channel,
             max_chunk_len,
             send_chunk: Vec::new(),
@@ -73,8 +66,20 @@ impl<T> CompressedTypedChannel<T> {
             recv_pos: 0,
             encoder: SnapEncoder::new(),
             decoder: SnapDecoder::new(),
-            _phantom: PhantomData,
         }
+    }
+
+    pub async fn send<T: Serialize>(&mut self, msg: &T) -> Result<(), Error> {
+        let bincode_config = self.bincode_config();
+
+        let serialized_len = bincode_config.serialized_size(msg)?;
+        if self.send_chunk.len() as u64 + serialized_len > self.max_chunk_len as u64 {
+            self.write_send_chunk().await?;
+        }
+
+        bincode_config.serialize_into(&mut self.send_chunk, msg)?;
+
+        Ok(())
     }
 
     pub async fn flush(&mut self) -> Result<(), Error> {
@@ -82,6 +87,48 @@ impl<T> CompressedTypedChannel<T> {
         self.finish_write().await?;
         self.channel.flush().await?;
         Ok(())
+    }
+
+    pub async fn recv<T: DeserializeOwned>(&mut self) -> Result<T, Error> {
+        let bincode_config = self.bincode_config();
+
+        loop {
+            if self.recv_pos < self.recv_chunk.len() {
+                let mut reader = &self.recv_chunk[self.recv_pos..];
+                let msg = bincode_config.deserialize_from(&mut reader)?;
+                self.recv_pos = self.recv_chunk.len() - reader.len();
+                return Ok(msg);
+            }
+
+            if self.read_pos < 3 {
+                self.read_buffer.resize(3, 0);
+                self.finish_read().await?;
+            }
+
+            let compressed = self.read_buffer[0] != 0;
+            let chunk_len = LittleEndian::read_u16(&self.read_buffer[1..3]);
+            if chunk_len > self.max_chunk_len {
+                return Err(Error::ChunkTooLarge);
+            }
+            self.read_buffer.resize(chunk_len as usize + 3, 0);
+            self.finish_read().await?;
+
+            if compressed {
+                let decompressed_len = decompress_len(&self.read_buffer[3..])?;
+                if decompressed_len > self.max_chunk_len as usize {
+                    return Err(Error::ChunkTooLarge);
+                }
+                self.recv_chunk.resize(decompressed_len, 0);
+                self.decoder
+                    .decompress(&self.read_buffer[3..], &mut self.recv_chunk)?;
+            } else {
+                self.recv_chunk.resize(chunk_len as usize, 0);
+                self.recv_chunk.copy_from_slice(&self.read_buffer[3..]);
+            }
+
+            self.recv_pos = 0;
+            self.read_pos = 0;
+        }
     }
 
     async fn write_send_chunk(&mut self) -> Result<(), Error> {
@@ -103,14 +150,14 @@ impl<T> CompressedTypedChannel<T> {
                 self.write_buffer[0] = 0;
                 LittleEndian::write_u16(
                     &mut self.write_buffer[1..3],
-                    (self.send_chunk.len() - 1).try_into().unwrap(),
+                    (self.send_chunk.len()).try_into().unwrap(),
                 );
             } else {
                 // An initial 1 means compressed
                 self.write_buffer[0] = 1;
                 LittleEndian::write_u16(
                     &mut self.write_buffer[1..3],
-                    (compressed_len - 1).try_into().unwrap(),
+                    (compressed_len).try_into().unwrap(),
                 );
             }
 
@@ -147,61 +194,33 @@ impl<T> CompressedTypedChannel<T> {
     }
 }
 
+/// Wrapper over an `CompressedBincodeChannel` that only allows a single message type.
+pub struct CompressedTypedChannel<T> {
+    channel: CompressedBincodeChannel,
+    _phantom: PhantomData<T>,
+}
+
+impl<T> CompressedTypedChannel<T> {
+    pub fn new(channel: CompressedBincodeChannel) -> Self {
+        CompressedTypedChannel {
+            channel,
+            _phantom: PhantomData,
+        }
+    }
+
+    pub async fn flush(&mut self) -> Result<(), Error> {
+        self.channel.flush().await
+    }
+}
+
 impl<T: Serialize> CompressedTypedChannel<T> {
     pub async fn send(&mut self, msg: &T) -> Result<(), Error> {
-        let bincode_config = self.bincode_config();
-
-        let serialized_len = bincode_config.serialized_size(msg)?;
-        if self.send_chunk.len() + serialized_len as usize > self.max_chunk_len {
-            self.write_send_chunk().await?;
-        }
-
-        bincode_config.serialize_into(&mut self.send_chunk, msg)?;
-
-        Ok(())
+        self.channel.send(msg).await
     }
 }
 
 impl<T: DeserializeOwned> CompressedTypedChannel<T> {
     pub async fn recv(&mut self) -> Result<T, Error> {
-        let bincode_config = self.bincode_config();
-
-        loop {
-            if self.recv_pos < self.recv_chunk.len() {
-                let mut reader = &self.recv_chunk[self.recv_pos..];
-                let msg = bincode_config.deserialize_from(&mut reader)?;
-                self.recv_pos = self.recv_chunk.len() - reader.len();
-                return Ok(msg);
-            }
-
-            if self.read_pos < 3 {
-                self.read_buffer.resize(3, 0);
-                self.finish_read().await?;
-            }
-
-            let compressed = self.read_buffer[0] != 0;
-            let chunk_len = LittleEndian::read_u16(&self.read_buffer[1..3]) as usize + 1;
-            if chunk_len > self.max_chunk_len {
-                return Err(Error::ChunkTooLarge);
-            }
-            self.read_buffer.resize(chunk_len as usize + 3, 0);
-            self.finish_read().await?;
-
-            if compressed {
-                let decompressed_len = decompress_len(&self.read_buffer[3..])?;
-                if decompressed_len > self.max_chunk_len {
-                    return Err(Error::ChunkTooLarge);
-                }
-                self.recv_chunk.resize(decompressed_len, 0);
-                self.decoder
-                    .decompress(&self.read_buffer[3..], &mut self.recv_chunk)?;
-            } else {
-                self.recv_chunk.resize(chunk_len, 0);
-                self.recv_chunk.copy_from_slice(&self.read_buffer[3..]);
-            }
-
-            self.recv_pos = 0;
-            self.read_pos = 0;
-        }
+        self.channel.recv().await
     }
 }

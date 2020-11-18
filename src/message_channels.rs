@@ -43,11 +43,11 @@ pub enum MessageChannelMode {
     Unreliable,
     Reliable {
         reliability_settings: reliable_channel::Settings,
-        max_message_len: usize,
+        max_message_len: u16,
     },
     Compressed {
         reliability_settings: reliable_channel::Settings,
-        max_chunk_len: usize,
+        max_chunk_len: u16,
     },
 }
 

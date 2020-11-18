@@ -48,7 +48,7 @@ where
     pub fn new(packet_pool: P, incoming: Receiver<P::Packet>, outgoing: Sender<P::Packet>) -> Self {
         UnreliableBincodeChannel {
             channel: UnreliableChannel::new(packet_pool, incoming, outgoing),
-            buffer: vec![0; MAX_MESSAGE_LEN].into_boxed_slice(),
+            buffer: vec![0; MAX_MESSAGE_LEN as usize].into_boxed_slice(),
         }
     }
 

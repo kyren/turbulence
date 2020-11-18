@@ -1,5 +1,5 @@
 use crate::{
-    compressed_typed_channel::CompressedTypedChannel,
+    compressed_bincode_channel::{CompressedBincodeChannel, CompressedTypedChannel},
     packet::PacketPool,
     packet_multiplexer::{
         ChannelStatistics, DuplicateChannel, MuxPacketPool, PacketChannel, PacketMultiplexer,
@@ -110,7 +110,7 @@ where
         channel: PacketChannel,
         buffer_size: usize,
         reliability_settings: reliable_channel::Settings,
-        max_message_len: usize,
+        max_message_len: u16,
     ) -> Result<(ReliableBincodeChannel, ChannelStatistics), DuplicateChannel> {
         let (channel, statistics) =
             self.open_reliable_channel(multiplexer, channel, buffer_size, reliability_settings)?;
@@ -126,7 +126,7 @@ where
         channel: PacketChannel,
         buffer_size: usize,
         reliability_settings: reliable_channel::Settings,
-        max_message_len: usize,
+        max_message_len: u16,
     ) -> Result<(ReliableTypedChannel<M>, ChannelStatistics), DuplicateChannel> {
         let (channel, statistics) = self.open_reliable_bincode_channel(
             multiplexer,
@@ -138,19 +138,37 @@ where
         Ok((ReliableTypedChannel::new(channel), statistics))
     }
 
+    pub fn open_compressed_bincode_channel(
+        &mut self,
+        multiplexer: &mut PacketMultiplexer<P::Packet>,
+        channel: PacketChannel,
+        buffer_size: usize,
+        reliability_settings: reliable_channel::Settings,
+        max_chunk_len: u16,
+    ) -> Result<(CompressedBincodeChannel, ChannelStatistics), DuplicateChannel> {
+        let (channel, statistics) =
+            self.open_reliable_channel(multiplexer, channel, buffer_size, reliability_settings)?;
+        Ok((
+            CompressedBincodeChannel::new(channel, max_chunk_len),
+            statistics,
+        ))
+    }
+
     pub fn open_compressed_typed_channel<M>(
         &mut self,
         multiplexer: &mut PacketMultiplexer<P::Packet>,
         channel: PacketChannel,
         buffer_size: usize,
         reliability_settings: reliable_channel::Settings,
-        max_chunk_len: usize,
+        max_chunk_len: u16,
     ) -> Result<(CompressedTypedChannel<M>, ChannelStatistics), DuplicateChannel> {
-        let (channel, statistics) =
-            self.open_reliable_channel(multiplexer, channel, buffer_size, reliability_settings)?;
-        Ok((
-            CompressedTypedChannel::new(channel, max_chunk_len),
-            statistics,
-        ))
+        let (channel, statistics) = self.open_compressed_bincode_channel(
+            multiplexer,
+            channel,
+            buffer_size,
+            reliability_settings,
+            max_chunk_len,
+        )?;
+        Ok((CompressedTypedChannel::new(channel), statistics))
     }
 }

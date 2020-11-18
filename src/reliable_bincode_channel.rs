@@ -19,15 +19,11 @@ pub enum Error {
     BincodeError(#[from] bincode::Error),
 }
 
-/// The maximum supported length for a message sent over a `ReliableBincodeChannel`.
-pub const MAX_MESSAGE_LEN: usize = u16::MAX as usize;
-
 /// Wraps a `ReliableChannel` together with an internal buffer to allow easily sending message types
 /// serialized with `bincode`.
 ///
 /// Messages are guaranteed to arrive, and are guaranteed to be in order.  Messages have a maximum
-/// length, but this maximum size can be much larger than the size of an individual packet (up to
-/// MAX_MESSAGE_LEN large).
+/// length, but this maximum size can be larger than the size of an individual packet.
 pub struct ReliableBincodeChannel {
     channel: ReliableChannel,
     max_message_len: u16,
@@ -43,15 +39,14 @@ pub struct ReliableBincodeChannel {
 
 impl ReliableBincodeChannel {
     /// Create a new `ReliableBincodeChannel` with a maximum message size of `max_message_len`.
-    pub fn new(channel: ReliableChannel, max_message_len: usize) -> Self {
-        assert!(max_message_len <= MAX_MESSAGE_LEN);
+    pub fn new(channel: ReliableChannel, max_message_len: u16) -> Self {
         ReliableBincodeChannel {
             channel,
-            max_message_len: max_message_len as u16,
-            write_buffer: vec![0; max_message_len].into_boxed_slice(),
+            max_message_len,
+            write_buffer: vec![0; max_message_len as usize].into_boxed_slice(),
             write_pos: 0,
             write_end: 0,
-            read_buffer: vec![0; max_message_len].into_boxed_slice(),
+            read_buffer: vec![0; max_message_len as usize].into_boxed_slice(),
             read_pos: 0,
             read_end: 0,
         }
