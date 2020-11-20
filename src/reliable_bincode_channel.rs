@@ -43,10 +43,10 @@ impl ReliableBincodeChannel {
         ReliableBincodeChannel {
             channel,
             max_message_len,
-            write_buffer: vec![0; max_message_len as usize].into_boxed_slice(),
+            write_buffer: vec![0; 2 + max_message_len as usize].into_boxed_slice(),
             write_pos: 0,
             write_end: 0,
-            read_buffer: vec![0; max_message_len as usize].into_boxed_slice(),
+            read_buffer: vec![0; 2 + max_message_len as usize].into_boxed_slice(),
             read_pos: 0,
             read_end: 0,
         }
