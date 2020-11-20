@@ -13,6 +13,8 @@ use crate::{
 pub enum SendError {
     #[error("outgoing packet stream has been disconnected")]
     Disconnected,
+    #[error("sent message is larger than the maximum packet size")]
+    TooBig,
     #[error("bincode serialization error: {0}")]
     BincodeError(bincode::Error),
 }
@@ -23,6 +25,8 @@ pub enum RecvError {
     Disconnected,
     #[error("incoming packet has bad message format")]
     BadFormat,
+    #[error("received message is larger than the configured maximum")]
+    TooBig,
     #[error("bincode serialization error: {0}")]
     BincodeError(bincode::Error),
 }
@@ -155,9 +159,7 @@ where
 fn from_inner_send_err(err: unreliable_channel::SendError) -> SendError {
     match err {
         unreliable_channel::SendError::Disconnected => SendError::Disconnected,
-        unreliable_channel::SendError::TooBig => {
-            unreachable!("messages that are too large are caught by bincode configuration")
-        }
+        unreliable_channel::SendError::TooBig => SendError::TooBig,
     }
 }
 
@@ -165,8 +167,6 @@ fn from_inner_recv_err(err: unreliable_channel::RecvError) -> RecvError {
     match err {
         unreliable_channel::RecvError::Disconnected => RecvError::Disconnected,
         unreliable_channel::RecvError::BadFormat => RecvError::BadFormat,
-        unreliable_channel::RecvError::TooBig => {
-            unreachable!("messages that are too large are caught by bincode configuration")
-        }
+        unreliable_channel::RecvError::TooBig => RecvError::TooBig,
     }
 }

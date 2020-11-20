@@ -18,7 +18,7 @@ pub const MAX_MESSAGE_LEN: u16 = MAX_PACKET_LEN - 2;
 pub enum SendError {
     #[error("outgoing packet stream has been disconnected")]
     Disconnected,
-    #[error("message length is larger than the maximum packet size")]
+    #[error("sent message is larger than the maximum packet size")]
     TooBig,
 }
 
@@ -28,7 +28,7 @@ pub enum RecvError {
     Disconnected,
     #[error("incoming packet has bad message format")]
     BadFormat,
-    #[error("message length is larger than the provided buffer")]
+    #[error("received message is larger than the provided buffer")]
     TooBig,
 }
 

@@ -11,7 +11,7 @@ use crate::reliable_channel::{self, ReliableChannel};
 pub enum Error {
     #[error("reliable channel error: {0}")]
     ReliableChannelError(#[from] reliable_channel::Error),
-    #[error("received length prefix exceeds the configured max message length")]
+    #[error("received message exceeds the configured max message length")]
     PrefixTooLarge,
     #[error("an error has been encountered that has caused the stream to shutdown")]
     Shutdown,
