@@ -12,7 +12,7 @@ use crate::reliable_channel::{self, ReliableChannel};
 pub enum Error {
     #[error("reliable channel error error: {0}")]
     ReliableChannelError(#[from] reliable_channel::Error),
-    #[error("chunk has exceeded the configured max chunk length")]
+    #[error("received chunk has exceeded the configured max chunk length")]
     ChunkTooLarge,
     #[error("bincode serialization error: {0}")]
     BincodeError(#[from] bincode::Error),
@@ -69,6 +69,10 @@ impl CompressedBincodeChannel {
         }
     }
 
+    /// Send the given message.
+    ///
+    /// This method is cancel safe, it will never partially send a message, though canceling it may
+    /// or may not buffer a message to be sent.
     pub async fn send<T: Serialize>(&mut self, msg: &T) -> Result<(), Error> {
         let bincode_config = self.bincode_config();
 
@@ -82,6 +86,10 @@ impl CompressedBincodeChannel {
         Ok(())
     }
 
+    /// Finish sending the current block of messages, compressing them and sending them over the
+    /// reliable channel.
+    ///
+    /// This method is cancel safe.
     pub async fn flush(&mut self) -> Result<(), Error> {
         self.write_send_chunk().await?;
         self.finish_write().await?;
@@ -89,6 +97,10 @@ impl CompressedBincodeChannel {
         Ok(())
     }
 
+    /// Receive a message.
+    ///
+    /// This method is cancel safe, it will never partially receive a message and will never drop a
+    /// received message.
     pub async fn recv<T: DeserializeOwned>(&mut self) -> Result<T, Error> {
         let bincode_config = self.bincode_config();
 

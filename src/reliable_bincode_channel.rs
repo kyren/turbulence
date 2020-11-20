@@ -11,8 +11,8 @@ use crate::reliable_channel::{self, ReliableChannel};
 pub enum Error {
     #[error("reliable channel error: {0}")]
     ReliableChannelError(#[from] reliable_channel::Error),
-    #[error("message has exceeded the configured max message length")]
-    MessageTooLarge,
+    #[error("received length prefix exceeds the configured max message length")]
+    PrefixTooLarge,
     #[error("an error has been encountered that has caused the stream to shutdown")]
     Shutdown,
     #[error("bincode serialization error: {0}")]
@@ -57,6 +57,9 @@ impl ReliableBincodeChannel {
     /// In order to ensure that messages are sent in a timely manner, `flush` must be called after
     /// calling this method.  Without calling `flush`, any pending writes will not be sent until the
     /// next automatic sender task wakeup.
+    ///
+    /// This method is cancel safe, it will never partially send a message, though canceling it may
+    /// or may not buffer a message to be sent.
     pub async fn send<T: Serialize>(&mut self, msg: &T) -> Result<(), Error> {
         self.finish_write().await?;
         self.write_pos = 0;
@@ -80,12 +83,17 @@ impl ReliableBincodeChannel {
     }
 
     /// Ensure that any previously sent messages are sent as soon as possible.
+    ///
+    /// This method is cancel safe.
     pub async fn flush(&mut self) -> Result<(), Error> {
         self.finish_write().await?;
         Ok(self.channel.flush().await?)
     }
 
     /// Read the next available incoming message.
+    ///
+    /// This method is cancel safe, it will never partially read a message or drop received
+    /// messages.
     pub async fn recv<'a, T: Deserialize<'a>>(&'a mut self) -> Result<T, Error> {
         if self.read_end < 2 {
             self.read_end = 2;
@@ -94,7 +102,7 @@ impl ReliableBincodeChannel {
 
         let message_len = LittleEndian::read_u16(&self.read_buffer[0..2]);
         if message_len > self.max_message_len {
-            return Err(Error::MessageTooLarge);
+            return Err(Error::PrefixTooLarge);
         }
         self.read_end = message_len as usize + 2;
         self.finish_read().await?;

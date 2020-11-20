@@ -71,6 +71,9 @@ pub struct Settings {
 }
 
 /// Turns a stream of unreliable, unordered packets into a reliable in-order stream of data.
+///
+/// All methods on `ReliableChannel` are always cancel safe, they return immediately once any amount
+/// of work is done, so canceling the returned futures makes them have no effect.
 pub struct ReliableChannel {
     shared: Arc<Mutex<Shared>>,
     task_error: Fuse<oneshot::Receiver<Error>>,

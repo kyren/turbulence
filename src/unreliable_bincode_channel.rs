@@ -56,6 +56,9 @@ where
     ///
     /// Messages are coalesced into larger packets before being sent, so in order to guarantee that
     /// the message is actually sent, you must call `flush`.
+    ///
+    /// This method is cancel safe, it will never partially send a message, though canceling it may
+    /// or may not buffer a message to be sent.
     pub async fn send<T: Serialize>(&mut self, msg: &T) -> Result<(), SendError> {
         let mut w = &mut self.buffer[..];
         bincode_config()
@@ -73,11 +76,16 @@ where
     ///
     /// This *must* be called to guarantee that any sent messages are actually sent to the outgoing
     /// packet stream.
+    ///
+    /// This method is cancel safe.
     pub async fn flush(&mut self) -> Result<(), SendError> {
         self.channel.flush().await.map_err(from_inner_send_err)
     }
 
     /// Receive a deserializable message type as soon as the next message is available.
+    ///
+    /// This method is cancel safe, it will never partially read a message or drop received
+    /// messages.
     pub async fn recv<'a, T: Deserialize<'a>>(&'a mut self) -> Result<T, RecvError> {
         let len = self
             .channel

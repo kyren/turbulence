@@ -63,6 +63,9 @@ where
     ///
     /// Messages are coalesced into larger packets before being sent, so in order to guarantee that
     /// the message is actually sent, you must call `flush`.
+    ///
+    /// This method is cancel safe, it will never partially send a message, though canceling it may
+    /// or may not buffer a message to be sent.
     pub async fn send(&mut self, msg: &[u8]) -> Result<(), SendError> {
         let msg_len: u16 = msg.len().try_into().map_err(|_| SendError::TooBig)?;
 
@@ -87,6 +90,8 @@ where
     ///
     /// This *must* be called to guarantee that any sent messages are actually sent to the outgoing
     /// packet stream.
+    ///
+    /// This method is cancel safe.
     pub async fn flush(&mut self) -> Result<(), SendError> {
         if !self.out_packet.is_empty() {
             let out_packet = mem::replace(&mut self.out_packet, self.packet_pool.acquire());
@@ -105,6 +110,9 @@ where
     ///
     /// If the received message fits into the provided buffer, this will return `Ok(message_len)`,
     /// otherwise it will return `Err(RecvError::TooBig)`.
+    ///
+    /// This method is cancel safe, it will never partially read a message or drop received
+    /// messages.
     pub async fn recv(&mut self, msg: &mut [u8]) -> Result<usize, RecvError> {
         if self.in_packet.is_none() {
             let packet = self

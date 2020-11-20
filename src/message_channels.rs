@@ -256,6 +256,9 @@ impl MessageChannels {
     /// `MessageChannels::send`, `MessageChannels::flush` must still be called afterwards in order
     /// to ensure delivery.
     ///
+    /// This method is cancel safe, it will never partially send a message, though canceling it may
+    /// or may not buffer a message to be sent.
+    ///
     /// # Panics
     /// Panics if this message type is not registered.
     pub async fn async_send<M: ChannelMessage>(
@@ -342,6 +345,9 @@ impl MessageChannels {
 
     /// Any async version of `MessageChannels::receive`, receives an incoming message on the channel
     /// associated with its message type but waits if there is no message available.
+    ///
+    /// This method is cancel safe, it will never partially read a message or drop received
+    /// messages.
     ///
     /// # Panics
     /// Panics if this message type is not registered.
