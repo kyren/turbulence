@@ -40,7 +40,9 @@ pub struct MessageChannelSettings {
 
 #[derive(Debug)]
 pub enum MessageChannelMode {
-    Unreliable,
+    Unreliable {
+        max_message_len: u16,
+    },
     Reliable {
         reliability_settings: reliable_channel::Settings,
         max_message_len: u16,
@@ -466,12 +468,13 @@ where
     // so would require that the typed channels not use async / await or that the trait would box
     // the returned futures, because rust doesn't yet support async / await in traits.
     let (channel_task, statistics) = match settings.channel_mode {
-        MessageChannelMode::Unreliable => {
+        MessageChannelMode::Unreliable { max_message_len } => {
             let (mut channel, statistics) = builder
                 .open_unreliable_typed_channel(
                     multiplexer,
                     settings.channel,
                     settings.packet_buffer_size,
+                    max_message_len,
                 )
                 .expect("duplicate packet channel");
             let task = async move {

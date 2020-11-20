@@ -10,8 +10,8 @@ use thiserror::Error;
 
 use crate::packet::{Packet, PacketPool, MAX_PACKET_LEN};
 
-/// The maximum possible message length of an `UnreliableChannel` message, based on the
-/// `MAX_PACKET_LEN`.
+/// The maximum possible message length of an `UnreliableChannel` message for the largest possible
+/// packet, based on the `MAX_PACKET_LEN`.
 pub const MAX_MESSAGE_LEN: u16 = MAX_PACKET_LEN - 2;
 
 #[derive(Debug, Error)]
@@ -63,6 +63,10 @@ where
     ///
     /// Messages are coalesced into larger packets before being sent, so in order to guarantee that
     /// the message is actually sent, you must call `flush`.
+    ///
+    /// Messages have a maximum size based on the size of the packets returned from the packet pool.
+    /// Two bytes are used to encode the length of the message, so the maximum message length is
+    /// `packet.len() - 2`, for whatever packet sizes are returned by the pool.
     ///
     /// This method is cancel safe, it will never partially send a message, though canceling it may
     /// or may not buffer a message to be sent.

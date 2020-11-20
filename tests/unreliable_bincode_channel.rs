@@ -1,7 +1,11 @@
 use futures::{channel::mpsc, executor::LocalPool, task::SpawnExt};
 use serde::{Deserialize, Serialize};
 
-use turbulence::{buffer::BufferPacketPool, unreliable_bincode_channel::UnreliableTypedChannel};
+use turbulence::{
+    buffer::BufferPacketPool,
+    unreliable_bincode_channel::{UnreliableBincodeChannel, UnreliableTypedChannel},
+    unreliable_channel::UnreliableChannel,
+};
 
 mod util;
 
@@ -16,8 +20,14 @@ fn test_unreliable_bincode_channel() {
     let (asend, arecv) = mpsc::channel(8);
     let (bsend, brecv) = mpsc::channel(8);
 
-    let mut stream1 = UnreliableTypedChannel::new(packet_pool.clone(), arecv, bsend);
-    let mut stream2 = UnreliableTypedChannel::new(packet_pool.clone(), brecv, asend);
+    let mut stream1 = UnreliableTypedChannel::new(UnreliableBincodeChannel::new(
+        UnreliableChannel::new(packet_pool.clone(), arecv, bsend),
+        512,
+    ));
+    let mut stream2 = UnreliableTypedChannel::new(UnreliableBincodeChannel::new(
+        UnreliableChannel::new(packet_pool.clone(), brecv, asend),
+        512,
+    ));
 
     #[derive(Eq, PartialEq, Debug, Serialize, Deserialize)]
     struct MyMsg {

@@ -54,7 +54,9 @@ struct Message2(i32);
 
 const MESSAGE2_SETTINGS: MessageChannelSettings = MessageChannelSettings {
     channel: 1,
-    channel_mode: MessageChannelMode::Unreliable,
+    channel_mode: MessageChannelMode::Unreliable {
+        max_message_len: 64,
+    },
     message_buffer_size: 8,
     packet_buffer_size: 8,
 };

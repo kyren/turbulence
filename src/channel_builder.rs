@@ -51,6 +51,7 @@ where
         multiplexer: &mut PacketMultiplexer<P::Packet>,
         channel: PacketChannel,
         buffer_size: usize,
+        max_message_len: u16,
     ) -> Result<
         (
             UnreliableBincodeChannel<MuxPacketPool<P>>,
@@ -58,9 +59,10 @@ where
         ),
         DuplicateChannel,
     > {
-        let (sender, receiver, statistics) = multiplexer.open_channel(channel, buffer_size)?;
+        let (channel, statistics) =
+            self.open_unreliable_channel(multiplexer, channel, buffer_size)?;
         Ok((
-            UnreliableBincodeChannel::new(self.pool.clone(), receiver, sender),
+            UnreliableBincodeChannel::new(channel, max_message_len),
             statistics,
         ))
     }
@@ -70,6 +72,7 @@ where
         multiplexer: &mut PacketMultiplexer<P::Packet>,
         channel: PacketChannel,
         buffer_size: usize,
+        max_message_len: u16,
     ) -> Result<
         (
             UnreliableTypedChannel<M, MuxPacketPool<P>>,
@@ -77,11 +80,13 @@ where
         ),
         DuplicateChannel,
     > {
-        let (sender, receiver, statistics) = multiplexer.open_channel(channel, buffer_size)?;
-        Ok((
-            UnreliableTypedChannel::new(self.pool.clone(), receiver, sender),
-            statistics,
-        ))
+        let (channel, statistics) = self.open_unreliable_bincode_channel(
+            multiplexer,
+            channel,
+            buffer_size,
+            max_message_len,
+        )?;
+        Ok((UnreliableTypedChannel::new(channel), statistics))
     }
 
     pub fn open_reliable_channel(

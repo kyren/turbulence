@@ -1,7 +1,6 @@
 use std::marker::PhantomData;
 
 use bincode::Options as _;
-use futures::channel::mpsc::{Receiver, Sender};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -45,10 +44,15 @@ impl<P> UnreliableBincodeChannel<P>
 where
     P: PacketPool,
 {
-    pub fn new(packet_pool: P, incoming: Receiver<P::Packet>, outgoing: Sender<P::Packet>) -> Self {
+    /// Create a new `UnreliableBincodeChannel` with the given max message size.
+    ///
+    /// The maximum message size is always limited by the underlying `UnreliableChannel` maximum
+    /// message size regardless of the `max_message_len` setting, but this can be used to restrict
+    /// the intermediate buffer used to serialize messages.
+    pub fn new(channel: UnreliableChannel<P>, max_message_len: u16) -> Self {
         UnreliableBincodeChannel {
-            channel: UnreliableChannel::new(packet_pool, incoming, outgoing),
-            buffer: vec![0; MAX_MESSAGE_LEN as usize].into_boxed_slice(),
+            channel,
+            buffer: vec![0; max_message_len.min(MAX_MESSAGE_LEN) as usize].into_boxed_slice(),
         }
     }
 
@@ -60,8 +64,9 @@ where
     /// This method is cancel safe, it will never partially send a message, though canceling it may
     /// or may not buffer a message to be sent.
     pub async fn send<T: Serialize>(&mut self, msg: &T) -> Result<(), SendError> {
+        let bincode_config = self.bincode_config();
         let mut w = &mut self.buffer[..];
-        bincode_config()
+        bincode_config
             .serialize_into(&mut w, msg)
             .map_err(SendError::BincodeError)?;
         let remaining = w.len();
@@ -92,9 +97,13 @@ where
             .recv(&mut self.buffer[..])
             .await
             .map_err(from_inner_recv_err)?;
-        bincode_config()
+        self.bincode_config()
             .deserialize(&self.buffer[0..len])
             .map_err(RecvError::BincodeError)
+    }
+
+    fn bincode_config(&self) -> impl bincode::Options + Copy {
+        bincode::options().with_limit(self.buffer.len() as u64)
     }
 }
 
@@ -111,9 +120,9 @@ impl<T, P> UnreliableTypedChannel<T, P>
 where
     P: PacketPool,
 {
-    pub fn new(packet_pool: P, incoming: Receiver<P::Packet>, outgoing: Sender<P::Packet>) -> Self {
+    pub fn new(channel: UnreliableBincodeChannel<P>) -> Self {
         UnreliableTypedChannel {
-            channel: UnreliableBincodeChannel::new(packet_pool, incoming, outgoing),
+            channel,
             _phantom: PhantomData,
         }
     }
@@ -160,8 +169,4 @@ fn from_inner_recv_err(err: unreliable_channel::RecvError) -> RecvError {
             unreachable!("messages that are too large are caught by bincode configuration")
         }
     }
-}
-
-fn bincode_config() -> impl bincode::Options + Copy {
-    bincode::options().with_limit(MAX_MESSAGE_LEN as u64)
 }
