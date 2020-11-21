@@ -25,6 +25,8 @@ use crate::{
     windows::{stream_gt, AckResult, RecvWindow, SendWindow, StreamPos},
 };
 
+/// All reliable channel errors are fatal, and once an error is generated all reliable channel
+/// methods will generate `Error::Shutdown` errors.
 #[derive(Debug, Error)]
 pub enum Error {
     #[error("incoming or outgoing packet channel has been disconnected")]

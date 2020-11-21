@@ -16,20 +16,22 @@ pub const MAX_MESSAGE_LEN: u16 = MAX_PACKET_LEN - 2;
 
 #[derive(Debug, Error)]
 pub enum SendError {
+    /// Fatal error due to channel disconnection.
     #[error("outgoing packet stream has been disconnected")]
     Disconnected,
+    /// Non-fatal error, message is unsent.
     #[error("sent message is larger than the maximum packet size")]
     TooBig,
 }
 
 #[derive(Debug, Error)]
 pub enum RecvError {
+    /// Fatal error due to channel disocnnection.
     #[error("incoming packet stream has been disconnected")]
     Disconnected,
+    /// Non-fatal error, the remainder of the incoming packet is dropped.
     #[error("incoming packet has bad message format")]
     BadFormat,
-    #[error("received message is larger than the provided buffer")]
-    TooBig,
 }
 
 /// Turns a stream of unreliable, unordered packets into a stream of unreliable, unordered messages.
@@ -117,7 +119,13 @@ where
     ///
     /// This method is cancel safe, it will never partially read a message or drop received
     /// messages.
-    pub async fn recv(&mut self, msg: &mut [u8]) -> Result<usize, RecvError> {
+    pub async fn recv(&mut self) -> Result<&[u8], RecvError> {
+        if let Some((packet, in_pos)) = &self.in_packet {
+            if *in_pos == packet.len() {
+                self.in_packet = None;
+            }
+        }
+
         if self.in_packet.is_none() {
             let packet = self
                 .incoming_packets
@@ -129,27 +137,20 @@ where
         let (packet, in_pos) = self.in_packet.as_mut().unwrap();
 
         if *in_pos + 2 > packet.len() {
+            *in_pos = packet.len();
             return Err(RecvError::BadFormat);
         }
         let length = LittleEndian::read_u16(&packet[*in_pos..*in_pos + 2]) as usize;
         *in_pos += 2;
 
         if *in_pos + length > packet.len() {
+            *in_pos = packet.len();
             return Err(RecvError::BadFormat);
         }
 
-        if length > msg.len() {
-            return Err(RecvError::TooBig);
-        }
-
-        msg[0..length].copy_from_slice(&packet[*in_pos..*in_pos + length]);
-
+        let msg = &packet[*in_pos..*in_pos + length];
         *in_pos += length;
 
-        if *in_pos == packet.len() {
-            self.in_packet = None;
-        }
-
-        Ok(length)
+        Ok(msg)
     }
 }

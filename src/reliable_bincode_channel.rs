@@ -9,12 +9,14 @@ use crate::reliable_channel::{self, ReliableChannel};
 
 #[derive(Debug, Error)]
 pub enum Error {
+    /// Fatal internal channel error.
     #[error("reliable channel error: {0}")]
     ReliableChannelError(#[from] reliable_channel::Error),
+    /// Fatal, reading the next message would exceed the maximum buffer length, no progress can be
+    /// made.
     #[error("received message exceeds the configured max message length")]
     PrefixTooLarge,
-    #[error("an error has been encountered that has caused the stream to shutdown")]
-    Shutdown,
+    /// Non-fatal, on send, no message is sent, on receive the message is *skipped*.
     #[error("bincode serialization error: {0}")]
     BincodeError(#[from] bincode::Error),
 }
@@ -62,24 +64,20 @@ impl ReliableBincodeChannel {
     /// or may not buffer a message to be sent.
     pub async fn send<T: Serialize>(&mut self, msg: &T) -> Result<(), Error> {
         self.finish_write().await?;
+
         self.write_pos = 0;
-        self.write_end = 2;
+        self.write_end = 0;
+
         let bincode_config = self.bincode_config();
         let mut w = &mut self.write_buffer[2..];
-        match bincode_config.serialize_into(&mut w, msg) {
-            Ok(()) => {
-                let remaining = w.len();
-                self.write_end = self.write_buffer.len() - remaining;
-                LittleEndian::write_u16(&mut self.write_buffer[0..2], (self.write_end - 2) as u16);
-                self.finish_write().await?;
-                Ok(())
-            }
-            Err(err) => {
-                self.write_pos = 0;
-                self.write_end = 0;
-                Err(err.into())
-            }
-        }
+        bincode_config.serialize_into(&mut w, msg)?;
+
+        let remaining = w.len();
+        self.write_end = self.write_buffer.len() - remaining;
+        LittleEndian::write_u16(&mut self.write_buffer[0..2], (self.write_end - 2) as u16);
+        self.finish_write().await?;
+
+        Ok(())
     }
 
     /// Ensure that any previously sent messages are sent as soon as possible.
@@ -111,7 +109,7 @@ impl ReliableBincodeChannel {
         let res = bincode_config.deserialize(&self.read_buffer[2..self.read_end]);
         self.read_pos = 0;
         self.read_end = 0;
-        res.map_err(|e| e.into())
+        Ok(res?)
     }
 
     async fn finish_write(&mut self) -> Result<(), Error> {

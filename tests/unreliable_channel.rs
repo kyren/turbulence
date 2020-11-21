@@ -33,9 +33,7 @@ fn test_unreliable_channel() {
         val: u8,
         len: usize,
     ) {
-        let mut msg2 = vec![0; len];
-        assert_eq!(stream.recv(&mut msg2).await.unwrap(), len);
-        assert_eq!(msg2, vec![val; len]);
+        assert_eq!(stream.recv().await.unwrap(), vec![val; len].as_slice());
     }
 
     spawner

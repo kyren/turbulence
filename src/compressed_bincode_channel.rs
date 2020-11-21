@@ -10,14 +10,22 @@ use crate::reliable_channel::{self, ReliableChannel};
 
 #[derive(Debug, Error)]
 pub enum Error {
+    /// Fatal internal channel error.
     #[error("reliable channel error error: {0}")]
     ReliableChannelError(#[from] reliable_channel::Error),
-    #[error("received chunk has exceeded the configured max chunk length")]
+    /// Fatal, reading the next chunk would exceed the maximum buffer length, no progress can be
+    /// made.
+    #[error("received chunk exceeds the configured max chunk length")]
     ChunkTooLarge,
-    #[error("bincode serialization error: {0}")]
-    BincodeError(#[from] bincode::Error),
+    /// Fatal, indicates corruption or protocol mismatch.
     #[error("Snappy serialization error: {0}")]
     SnapError(#[from] snap::Error),
+    /// Fatal during receive as it desynchronizes the stream, individual messages are not externally
+    /// length prefixed.
+    ///
+    /// Non-fatal during send, no message is sent.
+    #[error("bincode serialization error: {0}")]
+    BincodeError(#[from] bincode::Error),
 }
 
 /// Wraps a `ReliableMessageChannel` and reliably sends a single message type serialized with

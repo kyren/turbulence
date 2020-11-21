@@ -11,22 +11,18 @@ use crate::{
 
 #[derive(Debug, Error)]
 pub enum SendError {
-    #[error("outgoing packet stream has been disconnected")]
-    Disconnected,
-    #[error("sent message is larger than the maximum packet size")]
-    TooBig,
+    #[error("unreliable channel error: {0}")]
+    UnreliableChannelError(#[from] unreliable_channel::SendError),
+    /// Non-fatal error, message is unsent.
     #[error("bincode serialization error: {0}")]
     BincodeError(bincode::Error),
 }
 
 #[derive(Debug, Error)]
 pub enum RecvError {
-    #[error("incoming packet stream has been disconnected")]
-    Disconnected,
-    #[error("incoming packet has bad message format")]
-    BadFormat,
-    #[error("received message is larger than the configured maximum")]
-    TooBig,
+    #[error("unreliable channel error: {0}")]
+    UnreliableChannelError(#[from] unreliable_channel::RecvError),
+    /// Non-fatal error, message is skipped.
     #[error("bincode serialization error: {0}")]
     BincodeError(bincode::Error),
 }
@@ -75,10 +71,7 @@ where
             .map_err(SendError::BincodeError)?;
         let remaining = w.len();
         let written = self.buffer.len() - remaining;
-        self.channel
-            .send(&self.buffer[0..written])
-            .await
-            .map_err(from_inner_send_err)
+        Ok(self.channel.send(&self.buffer[0..written]).await?)
     }
 
     /// Finish sending any unsent coalesced packets.
@@ -88,7 +81,7 @@ where
     ///
     /// This method is cancel safe.
     pub async fn flush(&mut self) -> Result<(), SendError> {
-        self.channel.flush().await.map_err(from_inner_send_err)
+        Ok(self.channel.flush().await?)
     }
 
     /// Receive a deserializable message type as soon as the next message is available.
@@ -96,13 +89,10 @@ where
     /// This method is cancel safe, it will never partially read a message or drop received
     /// messages.
     pub async fn recv<'a, T: Deserialize<'a>>(&'a mut self) -> Result<T, RecvError> {
-        let len = self
-            .channel
-            .recv(&mut self.buffer[..])
-            .await
-            .map_err(from_inner_recv_err)?;
-        self.bincode_config()
-            .deserialize(&self.buffer[0..len])
+        let bincode_config = self.bincode_config();
+        let msg = self.channel.recv().await?;
+        bincode_config
+            .deserialize(msg)
             .map_err(RecvError::BincodeError)
     }
 
@@ -153,20 +143,5 @@ where
 {
     pub async fn recv(&'a mut self) -> Result<T, RecvError> {
         self.channel.recv().await
-    }
-}
-
-fn from_inner_send_err(err: unreliable_channel::SendError) -> SendError {
-    match err {
-        unreliable_channel::SendError::Disconnected => SendError::Disconnected,
-        unreliable_channel::SendError::TooBig => SendError::TooBig,
-    }
-}
-
-fn from_inner_recv_err(err: unreliable_channel::RecvError) -> RecvError {
-    match err {
-        unreliable_channel::RecvError::Disconnected => RecvError::Disconnected,
-        unreliable_channel::RecvError::BadFormat => RecvError::BadFormat,
-        unreliable_channel::RecvError::TooBig => RecvError::TooBig,
     }
 }
