@@ -8,6 +8,11 @@ pub type StreamPos = Wrapping<u32>;
 /// than by going right, and `a` is considered greater than `b` if the opposite is true.
 ///
 /// Cannot be used to implement `Ord` because it is not transitive.
+///
+/// In the case of a tie, where `a` != `b` but `a - b == b - a` (in other words, where both values
+/// are exactly opposite each other), stream_cmp(a, b) will still return `Ordering::Equal`.  In
+/// order use `stream_cmp` sensibly, we must ensure that `StreamPos` values can never be more than
+/// `u32::MAX / 2` (or 2^31 - 1) apart.
 pub fn stream_cmp(a: &StreamPos, b: &StreamPos) -> Ordering {
     (b - a).cmp(&(a - b))
 }
