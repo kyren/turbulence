@@ -77,6 +77,8 @@ pub struct Settings {
 /// All methods on `ReliableChannel` are always cancel safe, they return immediately once any amount
 /// of work is done, so canceling the returned futures makes them have no effect.
 pub struct ReliableChannel {
+    // TODO: It would be nicer to use `BiLock` once it is stable in `futures`, and would allow
+    // `ReliableChannel` to implement `AsyncRead` and `AsyncWrite`.
     shared: Arc<Mutex<Shared>>,
     task_error: Fuse<oneshot::Receiver<Error>>,
 }

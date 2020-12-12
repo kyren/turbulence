@@ -465,8 +465,10 @@ where
 
     // TODO: Ideally, you would want all the channel types to implement a single trait and not have
     // to repeat this task implementation for all of them.  Unfortunately, for the time being, doing
-    // so would require that the typed channels not use async / await or that the trait would box
-    // the returned futures, because rust doesn't yet support async / await in traits.
+    // so would require that the typed channels not use async methods or that the trait would box
+    // the returned futures, because rust doesn't yet support async in traits.  Another possibility
+    // would be to have the channels implement poll style traits like Stream and Sink, currently
+    // this is waiting mostly on being able to use `BiLock` in the reliable channel.
     let (channel_task, statistics) = match settings.channel_mode {
         MessageChannelMode::Unreliable { max_message_len } => {
             let (mut channel, statistics) = builder
