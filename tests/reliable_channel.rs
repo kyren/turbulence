@@ -112,7 +112,7 @@ fn test_reliable_stream() {
                 }
             }
 
-            a_done_send.send(()).unwrap();
+            let _ = a_done_send.send(stream1);
         }
     });
 
@@ -143,17 +143,17 @@ fn test_reliable_stream() {
                 }
             }
 
-            b_done_send.send(()).unwrap();
+            let _ = b_done_send.send(stream2);
         }
     });
 
-    let mut a_is_done = false;
-    let mut b_is_done = false;
+    let mut a_done_stream = None;
+    let mut b_done_stream = None;
     for _ in 0..100_000 {
-        a_is_done = a_is_done || a_done.try_recv().unwrap().is_some();
-        b_is_done = b_is_done || b_done.try_recv().unwrap().is_some();
+        a_done_stream = a_done_stream.or_else(|| a_done.try_recv().unwrap());
+        b_done_stream = b_done_stream.or_else(|| b_done.try_recv().unwrap());
 
-        if a_is_done && b_is_done {
+        if a_done_stream.is_some() && b_done_stream.is_some() {
             return;
         }
 

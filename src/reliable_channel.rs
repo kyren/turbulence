@@ -12,8 +12,8 @@ use std::{
 
 use byteorder::{ByteOrder, LittleEndian};
 use futures::{
-    channel::{mpsc, oneshot},
-    future::{self, Fuse, FusedFuture},
+    channel::mpsc,
+    future::{self, Fuse, FusedFuture, RemoteHandle},
     lock::{Mutex, MutexGuard},
     pin_mut, select, FutureExt, StreamExt,
 };
@@ -80,7 +80,7 @@ pub struct ReliableChannel {
     // TODO: It would be nicer to use `BiLock` once it is stable in `futures`, and would allow
     // `ReliableChannel` to implement `AsyncRead` and `AsyncWrite`.
     shared: Arc<Mutex<Shared>>,
-    task_error: Fuse<oneshot::Receiver<Error>>,
+    task: Fuse<RemoteHandle<Error>>,
 }
 
 impl ReliableChannel {
@@ -104,7 +104,6 @@ impl ReliableChannel {
         assert!(settings.rtt_update_factor > 0.);
         assert!(settings.rtt_resend_factor > 0.);
 
-        let (error_sender, error_receiver) = oneshot::channel();
         let resend_timer = runtime.sleep(settings.resend_time).fuse();
 
         let shared = Arc::new(Mutex::new(Shared {
@@ -136,16 +135,17 @@ impl ReliableChannel {
             rtt_estimate,
             bandwidth_limiter,
         };
-        runtime.spawn({
+        let (remote, remote_handle) = {
             let shared = Arc::clone(&shared);
-            async move {
-                let _ = error_sender.send(task.main_loop(shared).await.unwrap_err());
-            }
-        });
+            async move { task.main_loop(shared).await.unwrap_err() }
+        }
+        .remote_handle();
+
+        runtime.spawn(remote);
 
         ReliableChannel {
             shared,
-            task_error: error_receiver.fuse(),
+            task: remote_handle.fuse(),
         }
     }
 
@@ -155,7 +155,7 @@ impl ReliableChannel {
     /// In order to ensure that data is written to the channel in a timely manner,
     /// `ReliableChannel::flush` must be called.
     pub async fn write(&mut self, data: &[u8]) -> Result<usize, Error> {
-        if self.task_error.is_terminated() {
+        if self.task.is_terminated() {
             return Err(Error::Shutdown);
         }
 
@@ -182,7 +182,7 @@ impl ReliableChannel {
 
         select! {
             len = write_done => Ok(len),
-            error = &mut self.task_error => Err(error.expect("task has panicked")),
+            error = &mut self.task => Err(error),
         }
     }
 
@@ -191,7 +191,7 @@ impl ReliableChannel {
     /// Returns once the sending task has been notified to wake up and will send the written data
     /// promptly.  Does *not* actually wait for outgoing packets to be sent before returning.
     pub async fn flush(&mut self) -> Result<(), Error> {
-        if self.task_error.is_terminated() {
+        if self.task.is_terminated() {
             return Err(Error::Shutdown);
         }
 
@@ -204,7 +204,7 @@ impl ReliableChannel {
 
     /// Read any available data.  Returns once at least one byte of data has been read.
     pub async fn read(&mut self, data: &mut [u8]) -> Result<usize, Error> {
-        if self.task_error.is_terminated() {
+        if self.task.is_terminated() {
             return Err(Error::Shutdown);
         }
 
@@ -228,7 +228,7 @@ impl ReliableChannel {
 
         select! {
             len = read_done => Ok(len),
-            error = &mut self.task_error => Err(error.expect("task has panicked")),
+            error = &mut self.task => Err(error),
         }
     }
 }

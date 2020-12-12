@@ -5,8 +5,8 @@ use std::{
 };
 
 use futures::{
-    channel::{mpsc, oneshot},
-    future::{self, BoxFuture},
+    channel::mpsc,
+    future::{self, BoxFuture, RemoteHandle},
     select,
     stream::FuturesUnordered,
     FutureExt, StreamExt, TryFutureExt,
@@ -68,10 +68,10 @@ pub enum ChannelAlreadyRegistered {
 pub type TaskError = Box<dyn Error + Send + Sync>;
 
 #[derive(Debug, Error)]
-#[error("network task for message type {type_name:?} has errored: {source}")]
+#[error("network task for message type {type_name:?} has errored: {error}")]
 pub struct ChannelTaskError {
     pub type_name: &'static str,
-    pub source: TaskError,
+    pub error: TaskError,
 }
 
 pub struct MessageChannelsBuilder<R, P>
@@ -143,22 +143,26 @@ where
                     &mut channel_builder,
                     &mut channels_map,
                 )
-                .map_err(move |source| ChannelTaskError { type_name, source })
+                .map_err(move |error| ChannelTaskError { type_name, error })
             })
             .collect();
 
-        let (error_sender, error_receiver) = oneshot::channel();
-        channel_builder.runtime.spawn({
-            async move {
-                if let Some(res) = tasks.next().await {
-                    let _ = error_sender.send(res.unwrap_err());
-                }
+        let (remote, remote_handle) = async move {
+            match tasks.next().await {
+                None => ChannelTaskError {
+                    type_name: "none",
+                    error: "no channel tasks to run".to_owned().into(),
+                },
+                Some(Ok(())) => panic!("channel tasks only return errors"),
+                Some(Err(err)) => err,
             }
-        });
+        }
+        .remote_handle();
+        channel_builder.runtime.spawn(remote);
 
         MessageChannels {
             disconnected: false,
-            task_error: error_receiver,
+            task: remote_handle,
             channels: channels_map,
         }
     }
@@ -193,7 +197,7 @@ pub enum TryAsyncMessageError {
 #[derive(Debug)]
 pub struct MessageChannels {
     disconnected: bool,
-    task_error: oneshot::Receiver<ChannelTaskError>,
+    task: RemoteHandle<ChannelTaskError>,
     channels: ChannelsMap,
 }
 
@@ -214,7 +218,7 @@ impl MessageChannels {
     /// return that error.
     pub async fn recv_err(self) -> ChannelTaskError {
         drop(self.channels);
-        self.task_error.await.expect("task has panicked")
+        self.task.await
     }
 
     /// Send the given message on the channel associated with its message type.
