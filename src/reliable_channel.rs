@@ -104,7 +104,7 @@ impl ReliableChannel {
         assert!(settings.rtt_update_factor > 0.);
         assert!(settings.rtt_resend_factor > 0.);
 
-        let resend_timer = runtime.sleep(settings.resend_time).fuse();
+        let resend_timer = Box::pin(runtime.sleep(settings.resend_time).fuse());
 
         let shared = Arc::new(Mutex::new(Shared {
             send_window: SendWindow::new(settings.send_window_size, Wrapping(0)),
@@ -260,7 +260,7 @@ where
     incoming: mpsc::Receiver<P::Packet>,
     outgoing: mpsc::Sender<P::Packet>,
 
-    resend_timer: Fuse<R::Sleep>,
+    resend_timer: Pin<Box<Fuse<R::Sleep>>>,
     remote_recv_available: u32,
     unacked_ranges: HashMap<StreamPos, UnackedRange<R::Instant>>,
     rtt_estimate: f64,
@@ -341,7 +341,8 @@ where
                 WakeReason::ResendTimer => {
                     let mut shared = shared.lock().await;
                     self.resend(&mut *shared).await?;
-                    self.resend_timer = self.runtime.sleep(self.settings.resend_time).fuse();
+                    self.resend_timer
+                        .set(self.runtime.sleep(self.settings.resend_time).fuse());
                 }
                 WakeReason::IncomingPacket(packet) => {
                     let mut shared = shared.lock().await;
@@ -351,7 +352,8 @@ where
                     // We should use available bandwidth for resends before sending, to avoid
                     // starving resends
                     self.resend(&mut *shared).await?;
-                    self.resend_timer = self.runtime.sleep(self.settings.resend_time).fuse();
+                    self.resend_timer
+                        .set(self.runtime.sleep(self.settings.resend_time).fuse());
 
                     self.send(&mut *shared).await?;
                 }
