@@ -7,14 +7,17 @@ pub type StreamPos = Wrapping<u32>;
 /// A value `a` is considered less than `b` if it is faster to get to `a` from `b` by going left
 /// than by going right, and `a` is considered greater than `b` if the opposite is true.
 ///
-/// Cannot be used to implement `Ord` because it is not transitive.
+/// Cannot be used to implement `Ord` because this operation is not transitive.
 ///
 /// In the case of a tie, where `a` != `b` but `a - b == b - a` (in other words, where both values
-/// are exactly opposite each other), stream_cmp(a, b) will still return `Ordering::Equal`.  In
-/// order use `stream_cmp` sensibly, we must ensure that `StreamPos` values can never be more than
+/// are exactly opposite each other), there is no sensible wrapping order for `a` and `b`.  In order
+/// use `stream_cmp` sensibly, we must ensure that `StreamPos` values can never be more than
 /// `u32::MAX / 2` (or 2^31 - 1) apart.
 pub fn stream_cmp(a: &StreamPos, b: &StreamPos) -> Ordering {
-    (b - a).cmp(&(a - b))
+    let ord = (b - a).cmp(&(a - b));
+    // Assert that it is not valid to try to compare values exactly 2^31 apart.
+    debug_assert!(ord != Ordering::Equal || a == b);
+    ord
 }
 
 pub fn stream_lt(a: &StreamPos, b: &StreamPos) -> bool {
