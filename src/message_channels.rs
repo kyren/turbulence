@@ -272,7 +272,7 @@ impl MessageChannels {
         message: M,
     ) -> Result<(), MessageChannelsDisconnected> {
         self.try_async_send(message).await.map_err(|e| match e {
-            TryAsyncMessageError::Unregistered(e) => panic!(e),
+            TryAsyncMessageError::Unregistered(e) => panic!("{}", e),
             TryAsyncMessageError::Disconnected(e) => e,
         })
     }
@@ -361,7 +361,7 @@ impl MessageChannels {
         &mut self,
     ) -> Result<M, MessageChannelsDisconnected> {
         self.try_async_recv().await.map_err(|e| match e {
-            TryAsyncMessageError::Unregistered(e) => panic!(e),
+            TryAsyncMessageError::Unregistered(e) => panic!("{}", e),
             TryAsyncMessageError::Disconnected(e) => e,
         })
     }
