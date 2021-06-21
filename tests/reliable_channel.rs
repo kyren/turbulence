@@ -127,7 +127,6 @@ fn test_reliable_stream() {
                 let len = stream2.read(&mut recv_buffer).await.unwrap();
                 for i in 0..len {
                     if recv_buffer[i] != (c + i) as u8 {
-                        dbg!(c, i, c + i, len, &recv_buffer[..len]);
                         panic!();
                     }
                 }
