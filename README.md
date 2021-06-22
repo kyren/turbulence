@@ -134,6 +134,25 @@ because I use this library in a web browser connecting to a remote server using
 [webrtc-unreliable](https://github.com/kyren/webrtc-unreliable), and I have to
 implement it manually on top of web APIs and it's currently not trivial to do.
 
+***Why aren't my messages sending?***
+
+Messages are not sent as soon as soon as `MessageChannels::send` or any of its
+variants are called; one must call `MessageChannels::flush`. This allows for more
+efficient compression and dispatching of messages, analogous to batching rendering
+tasks.
+
+Standard usage of turbulence calls for the flushing of most messages at the
+end of one's game loop. To better facilitate this pattern,
+`MessageChannels::flush_all` is provided. Whereas `MessageChannels::flush<M>`
+provides fine grained control, sending only queued messages of a type M,
+`MessageChannels::flush_all` paints with a broader brush, flushing all messages
+regardless of their type.
+
+Note that some reliable messages may not need to be flushed in order to be
+transmitted, however, this may occur after some delay. Idiomatic usage of
+turbulence calls for flushing messages at appropriate intervals regardless
+of their reliability.
+
 ### Current status / Future plans
 
 I've used this library in a real project over the real internet, and it
