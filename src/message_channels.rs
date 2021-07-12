@@ -11,6 +11,7 @@ use futures::{
     stream::FuturesUnordered,
     FutureExt, StreamExt, TryFutureExt,
 };
+use rustc_hash::FxHashMap;
 use serde::{de::DeserializeOwned, Serialize};
 use thiserror::Error;
 
@@ -412,7 +413,7 @@ struct ChannelSet<M> {
 }
 
 #[derive(Debug, Default)]
-struct ChannelsMap(HashMap<TypeId, Box<dyn Any + Send + Sync>>);
+struct ChannelsMap(FxHashMap<TypeId, Box<dyn Any + Send + Sync>>);
 
 impl ChannelsMap {
     fn insert<M: ChannelMessage>(&mut self, channel_set: ChannelSet<M>) -> bool {

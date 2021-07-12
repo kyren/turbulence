@@ -1,5 +1,5 @@
 use std::{
-    collections::{hash_map, HashMap, HashSet},
+    collections::{hash_map, HashMap},
     fmt,
     ops::{Deref, DerefMut},
     pin::Pin,
@@ -16,6 +16,7 @@ use futures::{
     stream::SelectAll,
     Sink, Stream,
 };
+use rustc_hash::{FxHashMap, FxHashSet};
 use thiserror::Error;
 
 use crate::packet::{Packet, PacketPool};
@@ -185,9 +186,9 @@ where
     pub fn start(self) -> (IncomingMultiplexedPackets<P>, OutgoingMultiplexedPackets<P>) {
         (
             IncomingMultiplexedPackets {
-                incoming: self.incoming,
+                incoming: self.incoming.into_iter().collect(),
                 to_send: None,
-                to_flush: HashSet::new(),
+                to_flush: FxHashSet::default(),
             },
             OutgoingMultiplexedPackets {
                 outgoing: self.outgoing,
@@ -235,9 +236,9 @@ impl<P> IncomingTrySendError<P> {
 
 /// A handle to push incoming packets into the multiplexer.
 pub struct IncomingMultiplexedPackets<P> {
-    incoming: HashMap<PacketChannel, ChannelSender<P>>,
+    incoming: FxHashMap<PacketChannel, ChannelSender<P>>,
     to_send: Option<P>,
-    to_flush: HashSet<PacketChannel>,
+    to_flush: FxHashSet<PacketChannel>,
 }
 
 impl<P> IncomingMultiplexedPackets<P>

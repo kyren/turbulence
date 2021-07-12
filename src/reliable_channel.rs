@@ -1,5 +1,4 @@
 use std::{
-    collections::HashMap,
     future::Future,
     i16,
     num::Wrapping,
@@ -17,6 +16,7 @@ use futures::{
     lock::{Mutex, MutexGuard},
     pin_mut, select, FutureExt, StreamExt,
 };
+use rustc_hash::FxHashMap;
 use thiserror::Error;
 
 use crate::{
@@ -131,7 +131,7 @@ impl ReliableChannel {
             outgoing,
             resend_timer,
             remote_recv_available,
-            unacked_ranges: HashMap::new(),
+            unacked_ranges: FxHashMap::default(),
             rtt_estimate,
             bandwidth_limiter,
         };
@@ -262,7 +262,7 @@ where
 
     resend_timer: Pin<Box<Fuse<R::Sleep>>>,
     remote_recv_available: u32,
-    unacked_ranges: HashMap<StreamPos, UnackedRange<R::Instant>>,
+    unacked_ranges: FxHashMap<StreamPos, UnackedRange<R::Instant>>,
     rtt_estimate: f64,
     bandwidth_limiter: BandwidthLimiter<R>,
 }
