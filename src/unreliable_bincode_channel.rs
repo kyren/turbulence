@@ -6,6 +6,7 @@ use thiserror::Error;
 
 use crate::{
     packet::PacketPool,
+    runtime::Runtime,
     unreliable_channel::{self, UnreliableChannel, MAX_MESSAGE_LEN},
 };
 
@@ -32,16 +33,18 @@ pub enum RecvError {
 ///
 /// Just like the underlying channel, messages are not guaranteed to arrive, nor are they guaranteed
 /// to arrive in order.
-pub struct UnreliableBincodeChannel<P>
+pub struct UnreliableBincodeChannel<R, P>
 where
+    R: Runtime,
     P: PacketPool,
 {
-    channel: UnreliableChannel<P>,
+    channel: UnreliableChannel<R, P>,
     buffer: Box<[u8]>,
 }
 
-impl<P> UnreliableBincodeChannel<P>
+impl<R, P> UnreliableBincodeChannel<R, P>
 where
+    R: Runtime,
     P: PacketPool,
 {
     /// Create a new `UnreliableBincodeChannel` with the given max message size.
@@ -49,7 +52,7 @@ where
     /// The maximum message size is always limited by the underlying `UnreliableChannel` maximum
     /// message size regardless of the `max_message_len` setting, but this can be used to restrict
     /// the intermediate buffer used to serialize messages.
-    pub fn new(channel: UnreliableChannel<P>, max_message_len: u16) -> Self {
+    pub fn new(channel: UnreliableChannel<R, P>, max_message_len: u16) -> Self {
         UnreliableBincodeChannel {
             channel,
             buffer: vec![0; max_message_len.min(MAX_MESSAGE_LEN) as usize].into_boxed_slice(),
@@ -102,19 +105,21 @@ where
 }
 
 /// Wrapper over an `UnreliableBincodeChannel` that only allows a single message type.
-pub struct UnreliableTypedChannel<T, P>
+pub struct UnreliableTypedChannel<T, R, P>
 where
+    R: Runtime,
     P: PacketPool,
 {
-    channel: UnreliableBincodeChannel<P>,
+    channel: UnreliableBincodeChannel<R, P>,
     _phantom: PhantomData<T>,
 }
 
-impl<T, P> UnreliableTypedChannel<T, P>
+impl<T, R, P> UnreliableTypedChannel<T, R, P>
 where
+    R: Runtime,
     P: PacketPool,
 {
-    pub fn new(channel: UnreliableBincodeChannel<P>) -> Self {
+    pub fn new(channel: UnreliableBincodeChannel<R, P>) -> Self {
         UnreliableTypedChannel {
             channel,
             _phantom: PhantomData,
@@ -126,9 +131,10 @@ where
     }
 }
 
-impl<T, P> UnreliableTypedChannel<T, P>
+impl<T, R, P> UnreliableTypedChannel<T, R, P>
 where
     T: Serialize,
+    R: Runtime,
     P: PacketPool,
 {
     pub async fn send(&mut self, msg: &T) -> Result<(), SendError> {
@@ -136,9 +142,10 @@ where
     }
 }
 
-impl<'a, T, P> UnreliableTypedChannel<T, P>
+impl<'a, T, R, P> UnreliableTypedChannel<T, R, P>
 where
     T: Deserialize<'a>,
+    R: Runtime,
     P: PacketPool,
 {
     pub async fn recv(&'a mut self) -> Result<T, RecvError> {

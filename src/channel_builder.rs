@@ -8,7 +8,7 @@ use crate::{
     reliable_channel::{self, ReliableChannel},
     runtime::Runtime,
     unreliable_bincode_channel::{UnreliableBincodeChannel, UnreliableTypedChannel},
-    unreliable_channel::UnreliableChannel,
+    unreliable_channel::{self, UnreliableChannel},
 };
 
 /// Helper that allows for easily opening different channel types on a `PacketMultiplexer`.
@@ -38,10 +38,17 @@ where
         multiplexer: &mut PacketMultiplexer<P::Packet>,
         channel: PacketChannel,
         buffer_size: usize,
-    ) -> Result<(UnreliableChannel<MuxPacketPool<P>>, ChannelStatistics), DuplicateChannel> {
+        settings: unreliable_channel::Settings,
+    ) -> Result<(UnreliableChannel<R, MuxPacketPool<P>>, ChannelStatistics), DuplicateChannel> {
         let (sender, receiver, statistics) = multiplexer.open_channel(channel, buffer_size)?;
         Ok((
-            UnreliableChannel::new(self.pool.clone(), receiver, sender),
+            UnreliableChannel::new(
+                self.runtime.clone(),
+                self.pool.clone(),
+                settings,
+                receiver,
+                sender,
+            ),
             statistics,
         ))
     }
@@ -51,16 +58,17 @@ where
         multiplexer: &mut PacketMultiplexer<P::Packet>,
         channel: PacketChannel,
         buffer_size: usize,
+        settings: unreliable_channel::Settings,
         max_message_len: u16,
     ) -> Result<
         (
-            UnreliableBincodeChannel<MuxPacketPool<P>>,
+            UnreliableBincodeChannel<R, MuxPacketPool<P>>,
             ChannelStatistics,
         ),
         DuplicateChannel,
     > {
         let (channel, statistics) =
-            self.open_unreliable_channel(multiplexer, channel, buffer_size)?;
+            self.open_unreliable_channel(multiplexer, channel, buffer_size, settings)?;
         Ok((
             UnreliableBincodeChannel::new(channel, max_message_len),
             statistics,
@@ -72,10 +80,11 @@ where
         multiplexer: &mut PacketMultiplexer<P::Packet>,
         channel: PacketChannel,
         buffer_size: usize,
+        settings: unreliable_channel::Settings,
         max_message_len: u16,
     ) -> Result<
         (
-            UnreliableTypedChannel<M, MuxPacketPool<P>>,
+            UnreliableTypedChannel<M, R, MuxPacketPool<P>>,
             ChannelStatistics,
         ),
         DuplicateChannel,
@@ -84,6 +93,7 @@ where
             multiplexer,
             channel,
             buffer_size,
+            settings,
             max_message_len,
         )?;
         Ok((UnreliableTypedChannel::new(channel), statistics))
@@ -114,11 +124,11 @@ where
         multiplexer: &mut PacketMultiplexer<P::Packet>,
         channel: PacketChannel,
         buffer_size: usize,
-        reliability_settings: reliable_channel::Settings,
+        settings: reliable_channel::Settings,
         max_message_len: u16,
     ) -> Result<(ReliableBincodeChannel, ChannelStatistics), DuplicateChannel> {
         let (channel, statistics) =
-            self.open_reliable_channel(multiplexer, channel, buffer_size, reliability_settings)?;
+            self.open_reliable_channel(multiplexer, channel, buffer_size, settings)?;
         Ok((
             ReliableBincodeChannel::new(channel, max_message_len),
             statistics,
@@ -130,14 +140,14 @@ where
         multiplexer: &mut PacketMultiplexer<P::Packet>,
         channel: PacketChannel,
         buffer_size: usize,
-        reliability_settings: reliable_channel::Settings,
+        settings: reliable_channel::Settings,
         max_message_len: u16,
     ) -> Result<(ReliableTypedChannel<M>, ChannelStatistics), DuplicateChannel> {
         let (channel, statistics) = self.open_reliable_bincode_channel(
             multiplexer,
             channel,
             buffer_size,
-            reliability_settings,
+            settings,
             max_message_len,
         )?;
         Ok((ReliableTypedChannel::new(channel), statistics))
@@ -148,11 +158,11 @@ where
         multiplexer: &mut PacketMultiplexer<P::Packet>,
         channel: PacketChannel,
         buffer_size: usize,
-        reliability_settings: reliable_channel::Settings,
+        settings: reliable_channel::Settings,
         max_chunk_len: u16,
     ) -> Result<(CompressedBincodeChannel, ChannelStatistics), DuplicateChannel> {
         let (channel, statistics) =
-            self.open_reliable_channel(multiplexer, channel, buffer_size, reliability_settings)?;
+            self.open_reliable_channel(multiplexer, channel, buffer_size, settings)?;
         Ok((
             CompressedBincodeChannel::new(channel, max_chunk_len),
             statistics,
@@ -164,14 +174,14 @@ where
         multiplexer: &mut PacketMultiplexer<P::Packet>,
         channel: PacketChannel,
         buffer_size: usize,
-        reliability_settings: reliable_channel::Settings,
+        settings: reliable_channel::Settings,
         max_chunk_len: u16,
     ) -> Result<(CompressedTypedChannel<M>, ChannelStatistics), DuplicateChannel> {
         let (channel, statistics) = self.open_compressed_bincode_channel(
             multiplexer,
             channel,
             buffer_size,
-            reliability_settings,
+            settings,
             max_chunk_len,
         )?;
         Ok((CompressedTypedChannel::new(channel), statistics))

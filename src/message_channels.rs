@@ -22,6 +22,7 @@ use crate::{
     packet_multiplexer::{ChannelStatistics, PacketChannel, PacketMultiplexer},
     reliable_channel,
     runtime::Runtime,
+    unreliable_channel,
 };
 
 // TODO: Message channels are currently always full-duplex, because the unreliable / reliable
@@ -42,14 +43,15 @@ pub struct MessageChannelSettings {
 #[derive(Debug)]
 pub enum MessageChannelMode {
     Unreliable {
+        settings: unreliable_channel::Settings,
         max_message_len: u16,
     },
     Reliable {
-        reliability_settings: reliable_channel::Settings,
+        settings: reliable_channel::Settings,
         max_message_len: u16,
     },
     Compressed {
-        reliability_settings: reliable_channel::Settings,
+        settings: reliable_channel::Settings,
         max_chunk_len: u16,
     },
 }
@@ -189,9 +191,9 @@ pub enum TryAsyncMessageError {
 /// exactly one message type.
 ///
 /// Acts as a bridge between the sync and async worlds.  Provides sync methods to send and receive
-/// messages that do not block or error.  The only error condition is if any of the backing tasks
-/// end or if the backing packet channels are dropped, the `MessageChannels` will permanently go
-/// into a "disconnected" state.
+/// messages that do not block or error.  Has simplified error handling, is if any of the backing
+/// tasks end in an error or if the backing packet channels are dropped, the `MessageChannels` will
+/// permanently go into a "disconnected" state.
 ///
 /// Additionally still provides async versions of methods to send and receive messages that share
 /// the same simplified error handling, which may be useful during startup or shutdown.
@@ -475,12 +477,16 @@ where
     // would be to have the channels implement poll style traits like Stream and Sink, currently
     // this is waiting mostly on being able to use `BiLock` in the reliable channel.
     let (channel_task, statistics) = match settings.channel_mode {
-        MessageChannelMode::Unreliable { max_message_len } => {
+        MessageChannelMode::Unreliable {
+            settings: unreliable_settings,
+            max_message_len,
+        } => {
             let (mut channel, statistics) = builder
                 .open_unreliable_typed_channel(
                     multiplexer,
                     settings.channel,
                     settings.packet_buffer_size,
+                    unreliable_settings,
                     max_message_len,
                 )
                 .expect("duplicate packet channel");
@@ -516,7 +522,7 @@ where
             (task, statistics)
         }
         MessageChannelMode::Reliable {
-            reliability_settings,
+            settings: reliable_settings,
             max_message_len,
         } => {
             let (mut channel, statistics) = builder
@@ -524,7 +530,7 @@ where
                     multiplexer,
                     settings.channel,
                     settings.packet_buffer_size,
-                    reliability_settings,
+                    reliable_settings,
                     max_message_len,
                 )
                 .expect("duplicate packet channel");
@@ -562,7 +568,7 @@ where
             (task, statistics)
         }
         MessageChannelMode::Compressed {
-            reliability_settings,
+            settings: reliable_settings,
             max_chunk_len,
         } => {
             let (mut channel, statistics) = builder
@@ -570,7 +576,7 @@ where
                     multiplexer,
                     settings.channel,
                     settings.packet_buffer_size,
-                    reliability_settings,
+                    reliable_settings,
                     max_chunk_len,
                 )
                 .expect("duplicate packet channel");

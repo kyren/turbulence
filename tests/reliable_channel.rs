@@ -17,9 +17,9 @@ use self::util::{condition_link, LinkCondition, SimpleBufferPool, SimpleRuntime}
 fn test_reliable_stream() {
     const SETTINGS: Settings = Settings {
         bandwidth: 32768,
+        burst_bandwidth: 4096,
         recv_window_size: 16384,
         send_window_size: 16384,
-        burst_bandwidth: 4096,
         init_send: 512,
         resend_time: Duration::from_millis(50),
         initial_rtt: Duration::from_millis(100),
@@ -63,14 +63,14 @@ fn test_reliable_stream() {
     let mut stream1 = ReliableChannel::new(
         runtime.handle(),
         packet_pool.clone(),
-        SETTINGS.clone(),
+        SETTINGS,
         arecv,
         bsend,
     );
     let mut stream2 = ReliableChannel::new(
         runtime.handle(),
         packet_pool.clone(),
-        SETTINGS.clone(),
+        SETTINGS,
         brecv,
         asend,
     );

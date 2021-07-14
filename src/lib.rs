@@ -1,3 +1,4 @@
+mod bandwidth_limiter;
 pub mod buffer;
 pub mod channel_builder;
 pub mod compressed_bincode_channel;

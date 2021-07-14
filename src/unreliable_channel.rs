@@ -8,7 +8,11 @@ use futures::{
 };
 use thiserror::Error;
 
-use crate::packet::{Packet, PacketPool, MAX_PACKET_LEN};
+use crate::{
+    bandwidth_limiter::BandwidthLimiter,
+    packet::{Packet, PacketPool, MAX_PACKET_LEN},
+    runtime::Runtime,
+};
 
 /// The maximum possible message length of an `UnreliableChannel` message for the largest possible
 /// packet, based on the `MAX_PACKET_LEN`.
@@ -34,26 +38,49 @@ pub enum RecvError {
     BadFormat,
 }
 
+#[derive(Debug, Clone)]
+pub struct Settings {
+    /// The target outgoing bandwidth, in bytes / sec.
+    pub bandwidth: u32,
+    /// The maximum amount of bandwidth credit that can accumulate.  This is the maximum bytes that
+    /// will be sent in a single burst.
+    pub burst_bandwidth: u32,
+}
+
 /// Turns a stream of unreliable, unordered packets into a stream of unreliable, unordered messages.
-pub struct UnreliableChannel<P>
+pub struct UnreliableChannel<R, P>
 where
+    R: Runtime,
     P: PacketPool,
 {
     packet_pool: P,
+    bandwidth_limiter: BandwidthLimiter<R>,
     incoming_packets: Receiver<P::Packet>,
     outgoing_packets: Sender<P::Packet>,
     out_packet: P::Packet,
     in_packet: Option<(P::Packet, usize)>,
 }
 
-impl<P> UnreliableChannel<P>
+impl<R, P> UnreliableChannel<R, P>
 where
+    R: Runtime,
     P: PacketPool,
 {
-    pub fn new(packet_pool: P, incoming: Receiver<P::Packet>, outgoing: Sender<P::Packet>) -> Self {
+    pub fn new(
+        runtime: R,
+        packet_pool: P,
+        settings: Settings,
+        incoming: Receiver<P::Packet>,
+        outgoing: Sender<P::Packet>,
+    ) -> Self {
         let out_packet = packet_pool.acquire();
         UnreliableChannel {
             packet_pool,
+            bandwidth_limiter: BandwidthLimiter::new(
+                runtime,
+                settings.bandwidth,
+                settings.burst_bandwidth,
+            ),
             incoming_packets: incoming,
             outgoing_packets: outgoing,
             out_packet,
@@ -100,16 +127,20 @@ where
     /// This method is cancel safe.
     pub async fn flush(&mut self) -> Result<(), SendError> {
         if !self.out_packet.is_empty() {
-            let out_packet = mem::replace(&mut self.out_packet, self.packet_pool.acquire());
+            self.bandwidth_limiter.update_available();
+            self.bandwidth_limiter.delay_until_available().await;
+
             poll_fn(|cx| self.outgoing_packets.poll_ready(cx))
                 .await
                 .map_err(|_| SendError::Disconnected)?;
+            let out_packet = mem::replace(&mut self.out_packet, self.packet_pool.acquire());
+            self.bandwidth_limiter.take_bytes(out_packet.len() as u32);
             self.outgoing_packets
                 .start_send(out_packet)
-                .map_err(|_| SendError::Disconnected)
-        } else {
-            Ok(())
+                .map_err(|_| SendError::Disconnected)?;
         }
+
+        Ok(())
     }
 
     /// Receive a message into the provide buffer.

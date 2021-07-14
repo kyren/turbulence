@@ -20,6 +20,7 @@ use rustc_hash::FxHashMap;
 use thiserror::Error;
 
 use crate::{
+    bandwidth_limiter::BandwidthLimiter,
     packet::{Packet, PacketPool},
     runtime::Runtime,
     windows::{stream_gt, AckResult, RecvWindow, SendWindow, StreamPos},
@@ -46,12 +47,13 @@ pub struct Settings {
     /// this bandwidth limit, so this is designed to limit the amount of traffic this channel
     /// produces.
     pub bandwidth: u32,
-    /// The size of the incoming ring buffer
-    pub recv_window_size: u32,
-    /// The size of the outgoing ring buffer
-    pub send_window_size: u32,
-    /// The maximum available bytes to send in a single burst
+    /// The maximum amount of bandwidth credit that can accumulate.  This is the maximum bytes that
+    /// will be sent in a single burst.
     pub burst_bandwidth: u32,
+    /// The size of the incoming ring buffer.
+    pub recv_window_size: u32,
+    /// The size of the outgoing ring buffer.
+    pub send_window_size: u32,
     /// The sending side of a channel will always send a constant amount of bytes more than what it
     /// believes the remote's recv window actually is, to avoid stalling the connection.  This
     /// controls the amount past the recv window which will be sent, and also the initial amount of
@@ -117,7 +119,6 @@ impl ReliableChannel {
         let bandwidth_limiter = BandwidthLimiter::new(
             runtime.clone(),
             settings.bandwidth,
-            settings.burst_bandwidth,
             settings.burst_bandwidth,
         );
         let remote_recv_available = settings.init_send;
@@ -577,68 +578,5 @@ where
         }
 
         Ok(())
-    }
-}
-
-struct BandwidthLimiter<R: Runtime> {
-    runtime: R,
-    bandwidth: u32,
-    burst_bandwidth: u32,
-    bytes_available: f64,
-    last_calculation: R::Instant,
-}
-
-impl<R: Runtime> BandwidthLimiter<R> {
-    fn new(
-        runtime: R,
-        bandwidth: u32,
-        burst_bandwidth: u32,
-        initial_bytes: u32,
-    ) -> BandwidthLimiter<R> {
-        let last_calculation = runtime.now();
-        BandwidthLimiter {
-            runtime,
-            bandwidth,
-            burst_bandwidth,
-            bytes_available: initial_bytes as f64,
-            last_calculation,
-        }
-    }
-
-    // Delay until a time where there will be bandwidth available
-    async fn delay_until_available(&self) {
-        if self.bytes_available < 0. {
-            self.runtime
-                .sleep(Duration::from_secs_f64(
-                    (-self.bytes_available) / self.bandwidth as f64,
-                ))
-                .await;
-        }
-    }
-
-    // Actually update the amount of available bandwidth.  Additional available bytes are not added
-    // until this method is called to add them.
-    fn update_available(&mut self) {
-        let now = self.runtime.now();
-        self.bytes_available += self
-            .runtime
-            .duration_between(self.last_calculation, now)
-            .as_secs_f64()
-            * self.bandwidth as f64;
-        self.bytes_available = self.bytes_available.min(self.burst_bandwidth as f64);
-        self.last_calculation = now;
-    }
-
-    // The bandwidth limiter only needs to limit outgoing packets being sent at all, not their size,
-    // so this returns true if a non-negative amount of bytes is available.  If a packet is sent
-    // that is larger than the available bytes, the available bytes will go negative and this will
-    // no longer return true.
-    fn bytes_available(&self) -> bool {
-        self.bytes_available >= 0.
-    }
-
-    // Record that bytes were sent, possibly going into bandwidth debt.
-    fn take_bytes(&mut self, bytes: u32) {
-        self.bytes_available -= bytes as f64
     }
 }

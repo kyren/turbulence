@@ -18,9 +18,9 @@ use self::util::{condition_link, LinkCondition, SimpleBufferPool, SimpleRuntime}
 fn test_reliable_bincode_channel() {
     const SETTINGS: Settings = Settings {
         bandwidth: 2048,
+        burst_bandwidth: 512,
         recv_window_size: 512,
         send_window_size: 512,
-        burst_bandwidth: 512,
         init_send: 256,
         resend_time: Duration::from_millis(50),
         initial_rtt: Duration::from_millis(100),

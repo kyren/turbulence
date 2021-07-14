@@ -13,6 +13,7 @@ use turbulence::{
     packet_multiplexer::PacketMultiplexer,
     reliable_channel,
     runtime::Runtime,
+    unreliable_channel,
 };
 
 mod util;
@@ -29,11 +30,11 @@ struct Message1(i32);
 const MESSAGE1_SETTINGS: MessageChannelSettings = MessageChannelSettings {
     channel: 0,
     channel_mode: MessageChannelMode::Reliable {
-        reliability_settings: reliable_channel::Settings {
+        settings: reliable_channel::Settings {
             bandwidth: 4096,
+            burst_bandwidth: 1024,
             recv_window_size: 1024,
             send_window_size: 1024,
-            burst_bandwidth: 1024,
             init_send: 512,
             resend_time: Duration::from_millis(100),
             initial_rtt: Duration::from_millis(200),
@@ -55,6 +56,10 @@ struct Message2(i32);
 const MESSAGE2_SETTINGS: MessageChannelSettings = MessageChannelSettings {
     channel: 1,
     channel_mode: MessageChannelMode::Unreliable {
+        settings: unreliable_channel::Settings {
+            bandwidth: 4096,
+            burst_bandwidth: 1024,
+        },
         max_message_len: 64,
     },
     message_buffer_size: 8,
