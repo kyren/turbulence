@@ -38,7 +38,7 @@ pub enum RecvError {
     BadFormat,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Settings {
     /// The target outgoing bandwidth, in bytes / sec.
     pub bandwidth: u32,
