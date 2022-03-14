@@ -172,8 +172,8 @@ where
 }
 
 #[derive(Debug, Error)]
-#[error("no such message type registered")]
-pub struct MessageTypeUnregistered;
+#[error("no such message type `{0}` registered")]
+pub struct MessageTypeUnregistered(&'static str);
 
 #[derive(Debug, Error)]
 #[error("`MessageChannels` instance has become disconnected")]
@@ -428,7 +428,7 @@ impl ChannelsMap {
         Ok(self
             .0
             .get(&TypeId::of::<M>())
-            .ok_or(MessageTypeUnregistered)?
+            .ok_or_else(|| MessageTypeUnregistered(type_name::<M>()))?
             .downcast_ref()
             .unwrap())
     }
@@ -439,7 +439,7 @@ impl ChannelsMap {
         Ok(self
             .0
             .get_mut(&TypeId::of::<M>())
-            .ok_or(MessageTypeUnregistered)?
+            .ok_or_else(|| MessageTypeUnregistered(type_name::<M>()))?
             .downcast_mut()
             .unwrap())
     }
