@@ -1,3 +1,12 @@
+## [0.4]
+- Don't "nagle" in the reliable channel, *require* flush calls to ensure data is
+  sent.
+- [API Change]: Change length limits in message channels to be uniformly `u16`
+  and use the type system to express maximum values rather than constants.
+- Fix panics in reliable bincode channel with messages near upper limit due to
+  improper buffer size.
+- Document that all async methods are supposed to be cancel safe.
+
 ## [0.3]
 - Fix the message_channels test to be less confusing, this is very important as
   it is currently the best (hah) example.

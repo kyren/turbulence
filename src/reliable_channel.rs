@@ -153,8 +153,8 @@ impl ReliableChannel {
     /// Write the given data to the reliable channel and return once any nonzero amount of data has
     /// been written.
     ///
-    /// In order to ensure that data is written to the channel in a timely manner,
-    /// `ReliableChannel::flush` must be called.
+    /// In order to ensure that all data will be sent, `ReliableChannel::flush` must be called after
+    /// any number of writes.
     pub async fn write(&mut self, data: &[u8]) -> Result<usize, Error> {
         if self.task.is_terminated() {
             return Err(Error::Shutdown);
@@ -187,7 +187,7 @@ impl ReliableChannel {
         }
     }
 
-    /// Ensure that any previously written data is sent in a timely manner.
+    /// Ensure that any previously written data will be fully sent.
     ///
     /// Returns once the sending task has been notified to wake up and will send the written data
     /// promptly.  Does *not* actually wait for outgoing packets to be sent before returning.

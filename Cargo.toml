@@ -1,6 +1,6 @@
 [package]
 name = "turbulence"
-version = "0.3.1-alpha.0"
+version = "0.4.0"
 authors = ["kyren <kerriganw@gmail.com>"]
 edition = "2018"
 description = "Tools to provide serialization, multiplexing, optional reliability, and optional compression to a game's networking."
