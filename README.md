@@ -4,7 +4,7 @@
 
 ---
 
-[![Build Status](https://img.shields.io/circleci/project/github/kyren/turbulence.svg)](https://circleci.com/gh/kyren/turbulence)
+[![Build Status](https://img.shields.io/circleci/project/github/triplehex/turbulence.svg)](https://circleci.com/gh/triplehex/turbulence)
 [![Latest Version](https://img.shields.io/crates/v/turbulence.svg)](https://crates.io/crates/turbulence)
 [![API Documentation](https://docs.rs/turbulence/badge.svg)](https://docs.rs/turbulence)
 
@@ -131,8 +131,9 @@ use tokio / async-std?***
 The `PacketPool` trait exists not only to allow for custom packet types but also
 for things like the multiplexer, so it serves double duty.  `Runtime` exists
 because I use this library in a web browser connecting to a remote server using
-[webrtc-unreliable](https://github.com/kyren/webrtc-unreliable), and I have to
-implement it manually on top of web APIs and it's currently not trivial to do.
+[webrtc-unreliable](https://github.com/triplehex/webrtc-unreliable), and I have
+to implement it manually on top of web APIs and that is currently not trivial to
+do.
 
 ### Current status / Future plans
 
