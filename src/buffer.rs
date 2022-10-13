@@ -6,7 +6,7 @@ pub use crate::packet::{Packet, PacketPool};
 pub trait BufferPool {
     type Buffer: Deref<Target = [u8]> + DerefMut;
 
-    fn acquire(&self) -> Self::Buffer;
+    fn acquire(&mut self) -> Self::Buffer;
 }
 
 /// Turns a `BufferPool` implementation into something that implements `PacketPool`.
