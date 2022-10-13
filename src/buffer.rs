@@ -22,7 +22,7 @@ impl<B> BufferPacketPool<B> {
 impl<B: BufferPool> PacketPool for BufferPacketPool<B> {
     type Packet = BufferPacket<B::Buffer>;
 
-    fn acquire(&self) -> Self::Packet {
+    fn acquire(&mut self) -> Self::Packet {
         BufferPacket {
             buffer: self.0.acquire(),
             len: 0,

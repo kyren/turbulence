@@ -68,7 +68,7 @@ where
 {
     pub fn new(
         runtime: R,
-        packet_pool: P,
+        mut packet_pool: P,
         settings: Settings,
         incoming: Receiver<P::Packet>,
         outgoing: Sender<P::Packet>,

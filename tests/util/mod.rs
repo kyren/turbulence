@@ -184,7 +184,7 @@ pub struct LinkCondition {
 pub fn condition_link<P>(
     condition: LinkCondition,
     runtime: impl Runtime + Clone + Send + 'static,
-    pool: P,
+    mut pool: P,
     mut rng: impl Rng + Send + 'static,
     mut incoming: mpsc::Receiver<P::Packet>,
     outgoing: mpsc::Sender<P::Packet>,

@@ -75,7 +75,7 @@ where
 {
     type Packet = MuxPacket<P::Packet>;
 
-    fn acquire(&self) -> MuxPacket<P::Packet> {
+    fn acquire(&mut self) -> MuxPacket<P::Packet> {
         let mut packet = self.0.acquire();
         packet.resize(1, 0);
         MuxPacket(packet)

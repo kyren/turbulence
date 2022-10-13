@@ -617,7 +617,7 @@ where
 
     channels_map.insert(ChannelSet::<M> {
         outgoing_sender: outgoing_message_sender,
-        flush_sender: flush_sender,
+        flush_sender,
         incoming_receiver: incoming_message_receiver,
         statistics,
     });

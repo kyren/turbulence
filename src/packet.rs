@@ -48,5 +48,5 @@ pub trait Packet: Deref<Target = [u8]> + DerefMut {
 pub trait PacketPool {
     type Packet: Packet;
 
-    fn acquire(&self) -> Self::Packet;
+    fn acquire(&mut self) -> Self::Packet;
 }
