@@ -113,7 +113,7 @@ where
     /// settings.
     ///
     /// Can only be called once per message type, will error if it is called with the same message
-    /// type more than once.
+    /// type or channel number more than once.
     pub fn register<M: ChannelMessage>(
         &mut self,
         settings: MessageChannelSettings,
