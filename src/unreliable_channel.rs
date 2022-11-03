@@ -30,7 +30,7 @@ pub enum SendError {
 
 #[derive(Debug, Error)]
 pub enum RecvError {
-    /// Fatal error due to channel disocnnection.
+    /// Fatal error due to channel disconnection.
     #[error("incoming packet stream has been disconnected")]
     Disconnected,
     /// Non-fatal error, the remainder of the incoming packet is dropped.

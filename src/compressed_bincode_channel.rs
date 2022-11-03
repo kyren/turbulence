@@ -79,8 +79,8 @@ impl CompressedBincodeChannel {
 
     /// Send the given message.
     ///
-    /// This method is cancel safe, it will never partially send a message, though canceling it may
-    /// or may not buffer a message to be sent.
+    /// This method is cancel safe, it will never partially send a message, and completes
+    /// immediately upon successfully queuing a message to send.
     pub async fn send<T: Serialize>(&mut self, msg: &T) -> Result<(), Error> {
         let bincode_config = self.bincode_config();
 
