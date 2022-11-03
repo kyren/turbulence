@@ -13,23 +13,39 @@ pub type StreamPos = Wrapping<u32>;
 /// are exactly opposite each other), there is no sensible wrapping order for `a` and `b`. In
 /// order use `stream_cmp` sensibly, we must ensure that `StreamPos` values can never be more than
 /// `u32::MAX / 2` (or 2^31 - 1) apart.
-pub fn stream_cmp(a: &StreamPos, b: &StreamPos) -> Ordering {
+pub fn stream_cmp(a: StreamPos, b: StreamPos) -> Ordering {
     let ord = (b - a).cmp(&(a - b));
     // Assert that it is not valid to try to compare values exactly 2^31 apart.
     debug_assert!(ord != Ordering::Equal || a == b);
     ord
 }
 
-pub fn stream_lt(a: &StreamPos, b: &StreamPos) -> bool {
+pub fn stream_lt(a: StreamPos, b: StreamPos) -> bool {
     stream_cmp(a, b) == Ordering::Less
 }
 
-pub fn stream_gt(a: &StreamPos, b: &StreamPos) -> bool {
+pub fn stream_gt(a: StreamPos, b: StreamPos) -> bool {
     stream_cmp(a, b) == Ordering::Greater
 }
 
-pub fn stream_ge(a: &StreamPos, b: &StreamPos) -> bool {
+pub fn stream_ge(a: StreamPos, b: StreamPos) -> bool {
     stream_cmp(a, b) != Ordering::Less
+}
+
+pub fn stream_min(a: StreamPos, b: StreamPos) -> StreamPos {
+    if stream_lt(a, b) {
+        a
+    } else {
+        b
+    }
+}
+
+pub fn stream_max(a: StreamPos, b: StreamPos) -> StreamPos {
+    if stream_gt(a, b) {
+        a
+    } else {
+        b
+    }
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -153,10 +169,10 @@ impl SendWindow {
     pub fn ack_range(&mut self, start: StreamPos, end: StreamPos) -> AckResult {
         match self
             .unacked_ranges
-            .binary_search_by(|(range_start, _)| stream_cmp(range_start, &start))
+            .binary_search_by(|(range_start, _)| stream_cmp(*range_start, start))
         {
             Ok(i) => {
-                if stream_gt(&end, &self.unacked_ranges[i].1) {
+                if stream_gt(end, self.unacked_ranges[i].1) {
                     AckResult::InvalidRange
                 } else {
                     let unacked_start = self.unacked_start();
@@ -287,14 +303,14 @@ impl RecvWindow {
         // If stream positions were strictly ordered this would not be necessary, but this check
         // combined with the assertions that `data.len() <= u32::MAX / 2` and `self.capacity <=
         // u32::MAX / 2` should prevent wrapping issues.
-        if stream_gt(&start_pos, &recv_end_pos) {
+        if stream_gt(start_pos, recv_end_pos) {
             return None;
         }
 
         // `copy_start_pos` is the stream position at either the given `start_pos`, or the current
         // receive position, whichever is greater. We do not copy data that has already been
         // received, so this is where we will begin copying.
-        let copy_start_pos = if stream_gt(&self.recv_pos, &start_pos) {
+        let copy_start_pos = if stream_gt(self.recv_pos, start_pos) {
             self.recv_pos
         } else {
             start_pos
@@ -303,7 +319,7 @@ impl RecvWindow {
         // We calculate the `end_pos` as being either the previous `end_pos` or the stream position
         // at the maximum capacity of the receive buffer. We should not read more data than the
         // requested buffer capacity can hold.
-        let end_pos = if stream_lt(&end_pos, &recv_end_pos) {
+        let end_pos = if stream_lt(end_pos, recv_end_pos) {
             end_pos
         } else {
             recv_end_pos
@@ -311,10 +327,10 @@ impl RecvWindow {
 
         // If we are not copying any new data (the range from `copy_start_pos` to `end_pos` is
         // empty), then we are done.
-        if stream_ge(&copy_start_pos, &end_pos) {
+        if stream_ge(copy_start_pos, end_pos) {
             // We should only return and end position if there is actually acknowledged data (it
             // doesn't matter if the data has already been read and we skip copying it).
-            if stream_lt(&start_pos, &end_pos) {
+            if stream_lt(start_pos, end_pos) {
                 return Some(end_pos);
             } else {
                 return None;
@@ -337,14 +353,14 @@ impl RecvWindow {
         // Very, very carefully, combine this newly received region with the existing unready
         // regions and maintain all the invariants of the unready list.
 
-        if stream_ge(&self.recv_pos, &start_pos) {
+        if stream_ge(self.recv_pos, start_pos) {
             // If this received region touches the end of the ready block, we need to combine this
             // region with the ready block, and any unready regions that it overlaps with also need
             // to be combined into the ready block.
 
             let pos = match self
                 .unready
-                .binary_search_by(|(_, end)| stream_cmp(end, &end_pos))
+                .binary_search_by(|(_, end)| stream_cmp(*end, end_pos))
             {
                 Ok(i) => i,
                 Err(i) => i,
@@ -353,7 +369,7 @@ impl RecvWindow {
             let end = if pos == self.unready.len() {
                 self.unready.clear();
                 end_pos
-            } else if end_pos >= self.unready[pos].0 {
+            } else if stream_ge(end_pos, self.unready[pos].0) {
                 let end = self.unready[pos].1;
                 self.unready.drain(0..=pos);
                 end
@@ -371,7 +387,7 @@ impl RecvWindow {
 
             let insert_pos = match self
                 .unready
-                .binary_search_by(|(_, end)| stream_cmp(end, &start_pos))
+                .binary_search_by(|(_, end)| stream_cmp(*end, start_pos))
             {
                 Ok(i) => i,
                 Err(i) => i,
@@ -379,21 +395,21 @@ impl RecvWindow {
 
             if insert_pos == self.unready.len() {
                 self.unready.push((start_pos, end_pos));
-            } else if stream_lt(&end_pos, &self.unready[insert_pos].0) {
+            } else if stream_lt(end_pos, self.unready[insert_pos].0) {
                 self.unready.insert(insert_pos, (start_pos, end_pos));
             } else {
                 let start = self.unready[insert_pos].0;
                 for i in insert_pos..self.unready.len() {
-                    if stream_lt(&end_pos, &self.unready[i].0) {
+                    if stream_lt(end_pos, self.unready[i].0) {
                         self.unready.drain(insert_pos + 1..i);
-                        self.unready[insert_pos].0 = start.min(start_pos);
+                        self.unready[insert_pos].0 = stream_min(start, start_pos);
                         self.unready[insert_pos].1 = end_pos;
                         break;
-                    } else if stream_lt(&end_pos, &self.unready[i].1) || i == self.unready.len() - 1
-                    {
+                    } else if stream_lt(end_pos, self.unready[i].1) || i == self.unready.len() - 1 {
                         self.unready.drain(insert_pos..i);
-                        self.unready[insert_pos].0 = start.min(start_pos);
-                        self.unready[insert_pos].1 = self.unready[insert_pos].1.max(end_pos);
+                        self.unready[insert_pos].0 = stream_min(start, start_pos);
+                        self.unready[insert_pos].1 =
+                            stream_max(self.unready[insert_pos].1, end_pos);
                         break;
                     }
                 }
@@ -415,18 +431,18 @@ mod tests {
         let stream_start = Wrapping(u32::MAX - 11);
         let write_data = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
         let mut send_data = [0; 16];
-        let mut send_window = SendWindow::new(8, stream_start);
+        let mut send_window = SendWindow::new(7, stream_start);
 
-        assert_eq!(send_window.write_available(), 8);
+        assert_eq!(send_window.write_available(), 7);
         assert_eq!(send_window.send_pos(), stream_start);
 
         assert_eq!(send_window.write(&write_data[0..4]), 4);
         assert_eq!(send_window.write(&write_data[4..6]), 2);
-        assert_eq!(send_window.write(&write_data[6..10]), 2);
+        assert_eq!(send_window.write(&write_data[6..10]), 1);
 
         assert_eq!(send_window.send_pos(), stream_start);
 
-        assert_eq!(send_window.send_available(), 8);
+        assert_eq!(send_window.send_available(), 7);
         assert_eq!(
             send_window.send(&mut send_data[0..6]),
             Some((stream_start, stream_start + Wrapping(6)))
@@ -444,7 +460,7 @@ mod tests {
         );
 
         assert_eq!(send_window.write_available(), 4);
-        assert_eq!(send_window.write(&write_data[8..16]), 4);
+        assert_eq!(send_window.write(&write_data[7..16]), 4);
 
         assert_eq!(
             send_window.ack_range(stream_start + Wrapping(4), stream_start + Wrapping(6)),
@@ -452,9 +468,9 @@ mod tests {
         );
 
         assert_eq!(send_window.write_available(), 2);
-        assert_eq!(send_window.write(&write_data[12..16]), 2);
+        assert_eq!(send_window.write(&write_data[11..16]), 2);
 
-        assert_eq!(send_window.send_available(), 8);
+        assert_eq!(send_window.send_available(), 7);
         assert_eq!(
             send_window.send(&mut send_data[6..9]),
             Some((stream_start + Wrapping(6), stream_start + Wrapping(9)))
@@ -464,7 +480,7 @@ mod tests {
         }
         assert_eq!(send_window.send_pos(), stream_start + Wrapping(9));
 
-        assert_eq!(send_window.send_available(), 5);
+        assert_eq!(send_window.send_available(), 4);
         assert_eq!(
             send_window.send(&mut send_data[9..11]),
             Some((stream_start + Wrapping(9), stream_start + Wrapping(11)))
@@ -474,15 +490,15 @@ mod tests {
         }
         assert_eq!(send_window.send_pos(), stream_start + Wrapping(11));
 
-        assert_eq!(send_window.send_available(), 3);
+        assert_eq!(send_window.send_available(), 2);
         assert_eq!(
             send_window.send(&mut send_data[11..16]),
-            Some((stream_start + Wrapping(11), stream_start + Wrapping(14)))
+            Some((stream_start + Wrapping(11), stream_start + Wrapping(13)))
         );
-        for i in 11..14 {
+        for i in 11..13 {
             assert_eq!(send_data[i], i as u8);
         }
-        assert_eq!(send_window.send_pos(), stream_start + Wrapping(14));
+        assert_eq!(send_window.send_pos(), stream_start + Wrapping(13));
 
         // Ack ranges that error should not affect anything
         assert_eq!(
@@ -496,7 +512,7 @@ mod tests {
 
         assert_eq!(
             send_window.ack_range(stream_start + Wrapping(11), stream_start + Wrapping(12)),
-            AckResult::PartialAck(stream_start + Wrapping(14))
+            AckResult::PartialAck(stream_start + Wrapping(13))
         );
         assert_eq!(
             send_window.ack_range(stream_start + Wrapping(6), stream_start + Wrapping(9)),
@@ -504,11 +520,11 @@ mod tests {
         );
 
         assert_eq!(send_window.write_available(), 3);
-        assert_eq!(send_window.send_pos(), stream_start + Wrapping(14));
+        assert_eq!(send_window.send_pos(), stream_start + Wrapping(13));
         assert_eq!(send_window.write(&write_data[14..16]), 2);
 
         assert_eq!(
-            send_window.ack_range(stream_start + Wrapping(12), stream_start + Wrapping(14)),
+            send_window.ack_range(stream_start + Wrapping(12), stream_start + Wrapping(13)),
             AckResult::Ack
         );
         assert_eq!(
@@ -516,27 +532,27 @@ mod tests {
             AckResult::Ack
         );
 
-        assert_eq!(send_window.write_available(), 6);
+        assert_eq!(send_window.write_available(), 5);
 
         assert_eq!(send_window.send_available(), 2);
         assert_eq!(
             send_window.send(&mut send_data[14..16]),
-            Some((stream_start + Wrapping(14), stream_start + Wrapping(16)))
+            Some((stream_start + Wrapping(13), stream_start + Wrapping(15)))
         );
         for i in 14..16 {
             assert_eq!(send_data[i], i as u8);
         }
 
         assert_eq!(
-            send_window.ack_range(stream_start + Wrapping(14), stream_start + Wrapping(15)),
-            AckResult::PartialAck(stream_start + Wrapping(16)),
+            send_window.ack_range(stream_start + Wrapping(13), stream_start + Wrapping(14)),
+            AckResult::PartialAck(stream_start + Wrapping(15)),
         );
         assert_eq!(
-            send_window.ack_range(stream_start + Wrapping(15), stream_start + Wrapping(16)),
+            send_window.ack_range(stream_start + Wrapping(14), stream_start + Wrapping(15)),
             AckResult::Ack,
         );
 
-        assert_eq!(send_window.write_available(), 8);
+        assert_eq!(send_window.write_available(), 7);
     }
 
     #[test]
@@ -547,19 +563,19 @@ mod tests {
             24, 25, 26, 27, 28, 29, 30, 31,
         ];
         let mut read_data = [0; 32];
-        let mut recv_window = RecvWindow::new(8, stream_start);
+        let mut recv_window = RecvWindow::new(7, stream_start);
 
-        assert_eq!(recv_window.window_end(), stream_start + Wrapping(8));
+        assert_eq!(recv_window.window_end(), stream_start + Wrapping(7));
         assert_eq!(
             recv_window.recv(stream_start + Wrapping(0), &recv_data[0..4]),
             Some(stream_start + Wrapping(4))
         );
-        assert_eq!(recv_window.window_end(), stream_start + Wrapping(8));
+        assert_eq!(recv_window.window_end(), stream_start + Wrapping(7));
         assert_eq!(
             recv_window.recv(stream_start + Wrapping(2), &recv_data[2..6]),
             Some(stream_start + Wrapping(6))
         );
-        assert_eq!(recv_window.window_end(), stream_start + Wrapping(8));
+        assert_eq!(recv_window.window_end(), stream_start + Wrapping(7));
 
         assert_eq!(recv_window.read(&mut read_data[0..3]), 3);
         assert_eq!(recv_window.read(&mut read_data[3..5]), 2);
@@ -567,42 +583,43 @@ mod tests {
             assert_eq!(read_data[i], i as u8);
         }
 
-        assert_eq!(recv_window.window_end(), stream_start + Wrapping(13));
+        assert_eq!(recv_window.window_end(), stream_start + Wrapping(12));
         assert_eq!(
             recv_window.recv(stream_start + Wrapping(4), &recv_data[4..10]),
             Some(stream_start + Wrapping(10))
         );
         assert_eq!(
             recv_window.recv(stream_start + Wrapping(9), &recv_data[9..15]),
-            Some(stream_start + Wrapping(13))
+            Some(stream_start + Wrapping(12))
         );
-        assert_eq!(recv_window.window_end(), stream_start + Wrapping(13));
+        assert_eq!(recv_window.window_end(), stream_start + Wrapping(12));
+        assert_eq!(recv_window.read_available(), 7);
 
         assert_eq!(recv_window.read(&mut read_data[5..10]), 5);
         for i in 5..10 {
             assert_eq!(read_data[i], i as u8);
         }
 
-        assert_eq!(recv_window.window_end(), stream_start + Wrapping(18));
+        assert_eq!(recv_window.window_end(), stream_start + Wrapping(17));
         assert_eq!(
             recv_window.recv(stream_start + Wrapping(25), &recv_data[25..30]),
             None
         );
         assert_eq!(
             recv_window.recv(stream_start + Wrapping(15), &recv_data[15..25]),
-            Some(stream_start + Wrapping(18)),
+            Some(stream_start + Wrapping(17)),
         );
-        assert_eq!(recv_window.window_end(), stream_start + Wrapping(18));
+        assert_eq!(recv_window.window_end(), stream_start + Wrapping(17));
 
-        assert_eq!(recv_window.read(&mut read_data[10..20]), 3);
-        for i in 10..13 {
+        assert_eq!(recv_window.read(&mut read_data[10..20]), 2);
+        for i in 10..12 {
             assert_eq!(read_data[i], i as u8);
         }
 
-        assert_eq!(recv_window.window_end(), stream_start + Wrapping(21));
+        assert_eq!(recv_window.window_end(), stream_start + Wrapping(19));
         assert_eq!(
             recv_window.recv(stream_start + Wrapping(10), &recv_data[10..25]),
-            Some(stream_start + Wrapping(21))
+            Some(stream_start + Wrapping(19))
         );
 
         // Redundant receives
@@ -612,83 +629,100 @@ mod tests {
         );
         assert_eq!(
             recv_window.recv(stream_start + Wrapping(14), &recv_data[14..21]),
-            Some(stream_start + Wrapping(21)),
+            Some(stream_start + Wrapping(19)),
         );
         assert_eq!(
-            recv_window.recv(stream_start + Wrapping(20), &recv_data[20..21]),
-            Some(stream_start + Wrapping(21)),
+            recv_window.recv(stream_start + Wrapping(18), &recv_data[18..21]),
+            Some(stream_start + Wrapping(19)),
         );
 
         // receives off of end
         assert_eq!(
-            recv_window.recv(stream_start + Wrapping(21), &recv_data[21..25]),
+            recv_window.recv(stream_start + Wrapping(19), &recv_data[21..25]),
             None,
         );
         assert_eq!(
-            recv_window.recv(stream_start + Wrapping(22), &recv_data[22..25]),
+            recv_window.recv(stream_start + Wrapping(20), &recv_data[22..25]),
             None,
         );
         assert_eq!(
-            recv_window.recv(stream_start + Wrapping(21), &recv_data[21..21]),
+            recv_window.recv(stream_start + Wrapping(19), &recv_data[21..21]),
             None,
         );
 
-        assert_eq!(recv_window.read(&mut read_data[13..25]), 8);
-        for i in 13..21 {
+        assert_eq!(recv_window.read(&mut read_data[12..25]), 7);
+        for i in 12..19 {
             assert_eq!(read_data[i], i as u8);
         }
 
-        assert_eq!(recv_window.window_end(), stream_start + Wrapping(29));
+        assert_eq!(recv_window.window_end(), stream_start + Wrapping(26));
         assert_eq!(
-            recv_window.recv(stream_start + Wrapping(25), &recv_data[25..27]),
+            recv_window.recv(stream_start + Wrapping(24), &recv_data[24..25]),
+            Some(stream_start + Wrapping(25))
+        );
+        assert_eq!(recv_window.window_end(), stream_start + Wrapping(26));
+        assert_eq!(
+            recv_window.recv(stream_start + Wrapping(19), &recv_data[19..24]),
+            Some(stream_start + Wrapping(24))
+        );
+
+        assert_eq!(recv_window.read(&mut read_data[19..25]), 6);
+        for i in 19..25 {
+            assert_eq!(read_data[i], i as u8);
+        }
+
+        assert_eq!(recv_window.window_end(), stream_start + Wrapping(32));
+        assert_eq!(
+            recv_window.recv(stream_start + Wrapping(26), &recv_data[26..27]),
             Some(stream_start + Wrapping(27))
         );
-        assert_eq!(recv_window.window_end(), stream_start + Wrapping(29));
-        assert_eq!(
-            recv_window.recv(stream_start + Wrapping(21), &recv_data[21..26]),
-            Some(stream_start + Wrapping(26))
-        );
+        assert_eq!(recv_window.read(&mut read_data[25..32]), 0);
 
-        assert_eq!(recv_window.read(&mut read_data[21..27]), 6);
-        for i in 21..27 {
-            assert_eq!(read_data[i], i as u8);
-        }
-
-        assert_eq!(recv_window.window_end(), stream_start + Wrapping(35));
-        assert_eq!(
-            recv_window.recv(stream_start + Wrapping(31), &recv_data[31..32]),
-            Some(stream_start + Wrapping(32))
-        );
-        assert_eq!(recv_window.read(&mut read_data[27..32]), 0);
-        assert_eq!(recv_window.window_end(), stream_start + Wrapping(35));
+        assert_eq!(recv_window.window_end(), stream_start + Wrapping(32));
         assert_eq!(
             recv_window.recv(stream_start + Wrapping(28), &recv_data[28..29]),
             Some(stream_start + Wrapping(29))
         );
-        assert_eq!(recv_window.read(&mut read_data[27..32]), 0);
-        assert_eq!(recv_window.window_end(), stream_start + Wrapping(35));
+        assert_eq!(recv_window.read(&mut read_data[25..32]), 0);
+
+        assert_eq!(recv_window.window_end(), stream_start + Wrapping(32));
         assert_eq!(
             recv_window.recv(stream_start + Wrapping(30), &recv_data[30..31]),
             Some(stream_start + Wrapping(31))
         );
-        assert_eq!(recv_window.read(&mut read_data[27..32]), 0);
-        assert_eq!(recv_window.window_end(), stream_start + Wrapping(35));
+        assert_eq!(recv_window.read(&mut read_data[25..32]), 0);
+
+        assert_eq!(recv_window.window_end(), stream_start + Wrapping(32));
         assert_eq!(
             recv_window.recv(stream_start + Wrapping(29), &recv_data[29..30]),
             Some(stream_start + Wrapping(30))
         );
-        assert_eq!(recv_window.read(&mut read_data[27..32]), 0);
-        assert_eq!(recv_window.window_end(), stream_start + Wrapping(35));
+        assert_eq!(recv_window.read(&mut read_data[25..32]), 0);
+
+        assert_eq!(recv_window.window_end(), stream_start + Wrapping(32));
+        assert_eq!(
+            recv_window.recv(stream_start + Wrapping(28), &recv_data[28..29]),
+            Some(stream_start + Wrapping(29))
+        );
+        assert_eq!(recv_window.read(&mut read_data[25..32]), 0);
+
+        assert_eq!(recv_window.window_end(), stream_start + Wrapping(32));
         assert_eq!(
             recv_window.recv(stream_start + Wrapping(27), &recv_data[27..28]),
             Some(stream_start + Wrapping(28))
         );
+        assert_eq!(recv_window.read(&mut read_data[25..32]), 0);
 
-        assert_eq!(recv_window.read(&mut read_data[27..32]), 5);
-        for i in 27..32 {
+        assert_eq!(recv_window.window_end(), stream_start + Wrapping(32));
+        assert_eq!(
+            recv_window.recv(stream_start + Wrapping(25), &recv_data[25..26]),
+            Some(stream_start + Wrapping(26))
+        );
+        assert_eq!(recv_window.read(&mut read_data[25..31]), 6);
+        for i in 26..31 {
             assert_eq!(read_data[i], i as u8);
         }
 
-        assert_eq!(recv_window.window_end(), stream_start + Wrapping(40));
+        assert_eq!(recv_window.window_end(), stream_start + Wrapping(38));
     }
 }

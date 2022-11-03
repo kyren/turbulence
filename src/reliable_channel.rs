@@ -486,7 +486,7 @@ where
             let end_pos = start_pos + Wrapping(-data_len as u32);
             let recv_window_end = Wrapping(LittleEndian::read_u32(&packet[6..10]));
 
-            if stream_gt(&recv_window_end, &shared.send_window.send_pos()) {
+            if stream_gt(recv_window_end, shared.send_window.send_pos()) {
                 let old_remote_recv_available = self.remote_recv_available;
                 self.remote_recv_available = self
                     .remote_recv_available
