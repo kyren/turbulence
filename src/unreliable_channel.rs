@@ -97,8 +97,8 @@ where
     /// Two bytes are used to encode the length of the message, so the maximum message length is
     /// `packet.len() - 2`, for whatever packet sizes are returned by the pool.
     ///
-    /// This method is cancel safe, it will never partially send a message, though canceling it may
-    /// or may not buffer a message to be sent.
+    /// This method is cancel safe, it will never partially send a message, and the future will
+    /// complete immediately after writing a message.
     pub async fn send(&mut self, msg: &[u8]) -> Result<(), SendError> {
         let msg_len: u16 = msg.len().try_into().map_err(|_| SendError::TooBig)?;
 

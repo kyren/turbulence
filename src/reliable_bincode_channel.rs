@@ -60,8 +60,8 @@ impl ReliableBincodeChannel {
     /// calling this method. Without calling `flush`, any pending writes will not be sent until the
     /// next automatic sender task wakeup.
     ///
-    /// This method is cancel safe, it will never partially send a message, though canceling it may
-    /// or may not buffer a message to be sent.
+    /// This method is cancel safe, it will never partially send a message, and completes
+    /// immediately upon successfully queuing a message to send.
     pub async fn send<T: Serialize>(&mut self, msg: &T) -> Result<(), Error> {
         self.finish_write().await?;
 
@@ -75,7 +75,6 @@ impl ReliableBincodeChannel {
         let remaining = w.len();
         self.write_end = self.write_buffer.len() - remaining;
         LittleEndian::write_u16(&mut self.write_buffer[0..2], (self.write_end - 2) as u16);
-        self.finish_write().await?;
 
         Ok(())
     }

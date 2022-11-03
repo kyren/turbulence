@@ -40,6 +40,7 @@ where
 {
     channel: UnreliableChannel<R, P>,
     buffer: Box<[u8]>,
+    pending_write: u16,
 }
 
 impl<R, P> UnreliableBincodeChannel<R, P>
@@ -56,6 +57,7 @@ where
         UnreliableBincodeChannel {
             channel,
             buffer: vec![0; max_message_len.min(MAX_MESSAGE_LEN) as usize].into_boxed_slice(),
+            pending_write: 0,
         }
     }
 
@@ -64,17 +66,21 @@ where
     /// Messages are coalesced into larger packets before being sent, so in order to guarantee that
     /// the message is actually sent, you must call `flush`.
     ///
-    /// This method is cancel safe, it will never partially send a message, though canceling it may
-    /// or may not buffer a message to be sent.
+    /// This method is cancel safe, it will never partially send a message, and completes
+    /// immediately upon successfully queuing a message to send.
     pub async fn send<T: Serialize>(&mut self, msg: &T) -> Result<(), SendError> {
+        self.finish_write().await?;
+
         let bincode_config = self.bincode_config();
         let mut w = &mut self.buffer[..];
         bincode_config
             .serialize_into(&mut w, msg)
             .map_err(SendError::BincodeError)?;
+
         let remaining = w.len();
-        let written = self.buffer.len() - remaining;
-        Ok(self.channel.send(&self.buffer[0..written]).await?)
+        self.pending_write = (self.buffer.len() - remaining) as u16;
+
+        Ok(())
     }
 
     /// Finish sending any unsent coalesced packets.
@@ -84,6 +90,7 @@ where
     ///
     /// This method is cancel safe.
     pub async fn flush(&mut self) -> Result<(), SendError> {
+        self.finish_write().await?;
         Ok(self.channel.flush().await?)
     }
 
@@ -97,6 +104,16 @@ where
         bincode_config
             .deserialize(msg)
             .map_err(RecvError::BincodeError)
+    }
+
+    async fn finish_write(&mut self) -> Result<(), unreliable_channel::SendError> {
+        if self.pending_write != 0 {
+            self.channel
+                .send(&self.buffer[0..self.pending_write as usize])
+                .await?;
+            self.pending_write = 0;
+        }
+        Ok(())
     }
 
     fn bincode_config(&self) -> impl bincode::Options + Copy {

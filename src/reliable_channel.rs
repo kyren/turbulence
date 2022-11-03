@@ -74,9 +74,6 @@ pub struct Settings {
 }
 
 /// Turns a stream of unreliable, unordered packets into a reliable in-order stream of data.
-///
-/// All methods on `ReliableChannel` are always cancel safe, they return immediately once any amount
-/// of work is done, so canceling the returned futures makes them have no effect.
 pub struct ReliableChannel {
     // TODO: It would be nicer to use `BiLock` once it is stable in `futures`, and would allow
     // `ReliableChannel` to implement `AsyncRead` and `AsyncWrite`.
@@ -154,6 +151,9 @@ impl ReliableChannel {
     ///
     /// In order to ensure that all data will be sent, `ReliableChannel::flush` must be called after
     /// any number of writes.
+    ///
+    /// This method is cancel safe, it completes immediately once any amount of data is written,
+    /// dropping an incomplete future will have no effect.
     pub async fn write(&mut self, data: &[u8]) -> Result<usize, Error> {
         if self.task.is_terminated() {
             return Err(Error::Shutdown);
@@ -190,6 +190,8 @@ impl ReliableChannel {
     ///
     /// Returns once the sending task has been notified to wake up and will send the written data
     /// promptly. Does *not* actually wait for outgoing packets to be sent before returning.
+    ///
+    /// This method is cancel safe.
     pub async fn flush(&mut self) -> Result<(), Error> {
         if self.task.is_terminated() {
             return Err(Error::Shutdown);
@@ -203,6 +205,9 @@ impl ReliableChannel {
     }
 
     /// Read any available data. Returns once at least one byte of data has been read.
+    ///
+    /// This method is cancel safe, it completes immediately once any amount of data is read, dropping
+    /// an incomplete future will have no effect.
     pub async fn read(&mut self, data: &mut [u8]) -> Result<usize, Error> {
         if self.task.is_terminated() {
             return Err(Error::Shutdown);
