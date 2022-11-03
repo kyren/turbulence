@@ -19,10 +19,14 @@ use crate::{
 pub const MAX_MESSAGE_LEN: u16 = MAX_PACKET_LEN - 2;
 
 #[derive(Debug, Error)]
+/// Fatal error due to channel disconnection.
+#[error("incoming or outgoing packet channel has been disconnected")]
+pub struct Disconnected;
+
+#[derive(Debug, Error)]
 pub enum SendError {
-    /// Fatal error due to channel disconnection.
-    #[error("outgoing packet stream has been disconnected")]
-    Disconnected,
+    #[error(transparent)]
+    Disconnected(#[from] Disconnected),
     /// Non-fatal error, message is unsent.
     #[error("sent message is larger than the maximum packet size")]
     TooBig,
@@ -30,9 +34,8 @@ pub enum SendError {
 
 #[derive(Debug, Error)]
 pub enum RecvError {
-    /// Fatal error due to channel disconnection.
-    #[error("incoming packet stream has been disconnected")]
-    Disconnected,
+    #[error(transparent)]
+    Disconnected(#[from] Disconnected),
     /// Non-fatal error, the remainder of the incoming packet is dropped.
     #[error("incoming packet has bad message format")]
     BadFormat,
@@ -125,19 +128,19 @@ where
     /// packet stream.
     ///
     /// This method is cancel safe.
-    pub async fn flush(&mut self) -> Result<(), SendError> {
+    pub async fn flush(&mut self) -> Result<(), Disconnected> {
         if !self.out_packet.is_empty() {
             self.bandwidth_limiter.update_available();
             self.bandwidth_limiter.delay_until_available().await;
 
             poll_fn(|cx| self.outgoing_packets.poll_ready(cx))
                 .await
-                .map_err(|_| SendError::Disconnected)?;
+                .map_err(|_| Disconnected)?;
             let out_packet = mem::replace(&mut self.out_packet, self.packet_pool.acquire());
             self.bandwidth_limiter.take_bytes(out_packet.len() as u32);
             self.outgoing_packets
                 .start_send(out_packet)
-                .map_err(|_| SendError::Disconnected)?;
+                .map_err(|_| Disconnected)?;
         }
 
         Ok(())
@@ -158,11 +161,7 @@ where
         }
 
         if self.in_packet.is_none() {
-            let packet = self
-                .incoming_packets
-                .next()
-                .await
-                .ok_or(RecvError::Disconnected)?;
+            let packet = self.incoming_packets.next().await.ok_or(Disconnected)?;
             self.in_packet = Some((packet, 0));
         }
         let (packet, in_pos) = self.in_packet.as_mut().unwrap();

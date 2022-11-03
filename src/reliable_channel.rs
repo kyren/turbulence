@@ -14,7 +14,7 @@ use futures::{
     channel::mpsc,
     future::{self, Fuse, FusedFuture, RemoteHandle},
     lock::{Mutex, MutexGuard},
-    pin_mut, select, FutureExt, StreamExt,
+    select, select_biased, FutureExt, StreamExt,
 };
 use rustc_hash::FxHashMap;
 use thiserror::Error;
@@ -180,9 +180,9 @@ impl ReliableChannel {
             })
             .fuse();
 
-        select! {
-            len = write_done => Ok(len),
+        select_biased! {
             error = &mut self.task => Err(error),
+            len = write_done => Ok(len),
         }
     }
 
@@ -197,11 +197,15 @@ impl ReliableChannel {
             return Err(Error::Shutdown);
         }
 
-        let mut shared = self.shared.lock().await;
-        if let Some(send_ready) = shared.send_ready.take() {
-            send_ready.wake();
+        select_biased! {
+            error = &mut self.task => Err(error),
+            mut shared = self.shared.lock() => {
+                if let Some(send_ready) = shared.send_ready.take() {
+                    send_ready.wake();
+                }
+                Ok(())
+            }
         }
-        Ok(())
     }
 
     /// Read any available data. Returns once at least one byte of data has been read.
@@ -231,9 +235,9 @@ impl ReliableChannel {
             })
             .fuse();
 
-        select! {
-            len = read_done => Ok(len),
+        select_biased! {
             error = &mut self.task => Err(error),
+            len = read_done => Ok(len),
         }
     }
 }
@@ -300,7 +304,6 @@ where
                     bandwidth_limiter.delay_until_available().await;
                 }
                 .fuse();
-                pin_mut!(resend_timer);
 
                 let remote_recv_available = self.remote_recv_available;
                 let send_available = async {
@@ -329,14 +332,13 @@ where
                     .await
                 }
                 .fuse();
-                pin_mut!(send_available);
 
                 select! {
-                    _ = resend_timer => WakeReason::ResendTimer,
+                    _ = { resend_timer } => WakeReason::ResendTimer,
                     incoming_packet = self.incoming.next() => {
                         WakeReason::IncomingPacket(incoming_packet.ok_or(Error::Disconnected)?)
                     },
-                    shared = send_available => WakeReason::SendAvailable(shared),
+                    shared = { send_available } => WakeReason::SendAvailable(shared),
                 }
             };
 

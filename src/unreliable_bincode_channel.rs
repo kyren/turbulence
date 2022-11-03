@@ -89,7 +89,7 @@ where
     /// packet stream.
     ///
     /// This method is cancel safe.
-    pub async fn flush(&mut self) -> Result<(), SendError> {
+    pub async fn flush(&mut self) -> Result<(), unreliable_channel::SendError> {
         self.finish_write().await?;
         Ok(self.channel.flush().await?)
     }
@@ -143,7 +143,7 @@ where
         }
     }
 
-    pub async fn flush(&mut self) -> Result<(), SendError> {
+    pub async fn flush(&mut self) -> Result<(), unreliable_channel::SendError> {
         self.channel.flush().await
     }
 }

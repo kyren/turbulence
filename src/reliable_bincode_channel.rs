@@ -8,15 +8,25 @@ use thiserror::Error;
 use crate::reliable_channel::{self, ReliableChannel};
 
 #[derive(Debug, Error)]
-pub enum Error {
+pub enum SendError {
     /// Fatal internal channel error.
     #[error("reliable channel error: {0}")]
     ReliableChannelError(#[from] reliable_channel::Error),
-    /// Fatal, reading the next message would exceed the maximum buffer length, no progress can be
-    /// made.
+    /// Non-fatal error, message is unsent.
+    #[error("bincode serialization error: {0}")]
+    BincodeError(#[from] bincode::Error),
+}
+
+#[derive(Debug, Error)]
+pub enum RecvError {
+    /// Fatal internal channel error.
+    #[error("reliable channel error: {0}")]
+    ReliableChannelError(#[from] reliable_channel::Error),
+    /// Fatal, reading the next message would exceed the maximum buffer length, no progress can
+    /// be made.
     #[error("received message exceeds the configured max message length")]
     PrefixTooLarge,
-    /// Non-fatal, on send, no message is sent, on receive the message is *skipped*.
+    /// Non-fatal error, message is skipped.
     #[error("bincode serialization error: {0}")]
     BincodeError(#[from] bincode::Error),
 }
@@ -62,7 +72,7 @@ impl ReliableBincodeChannel {
     ///
     /// This method is cancel safe, it will never partially send a message, and completes
     /// immediately upon successfully queuing a message to send.
-    pub async fn send<T: Serialize>(&mut self, msg: &T) -> Result<(), Error> {
+    pub async fn send<T: Serialize>(&mut self, msg: &T) -> Result<(), SendError> {
         self.finish_write().await?;
 
         self.write_pos = 0;
@@ -82,7 +92,7 @@ impl ReliableBincodeChannel {
     /// Ensure that any previously sent messages are sent as soon as possible.
     ///
     /// This method is cancel safe.
-    pub async fn flush(&mut self) -> Result<(), Error> {
+    pub async fn flush(&mut self) -> Result<(), reliable_channel::Error> {
         self.finish_write().await?;
         Ok(self.channel.flush().await?)
     }
@@ -91,7 +101,7 @@ impl ReliableBincodeChannel {
     ///
     /// This method is cancel safe, it will never partially read a message or drop received
     /// messages.
-    pub async fn recv<'a, T: Deserialize<'a>>(&'a mut self) -> Result<T, Error> {
+    pub async fn recv<'a, T: Deserialize<'a>>(&'a mut self) -> Result<T, RecvError> {
         if self.read_end < 2 {
             self.read_end = 2;
         }
@@ -99,7 +109,7 @@ impl ReliableBincodeChannel {
 
         let message_len = LittleEndian::read_u16(&self.read_buffer[0..2]);
         if message_len > self.max_message_len {
-            return Err(Error::PrefixTooLarge);
+            return Err(RecvError::PrefixTooLarge);
         }
         self.read_end = message_len as usize + 2;
         self.finish_read().await?;
@@ -111,7 +121,7 @@ impl ReliableBincodeChannel {
         Ok(res?)
     }
 
-    async fn finish_write(&mut self) -> Result<(), Error> {
+    async fn finish_write(&mut self) -> Result<(), reliable_channel::Error> {
         while self.write_pos < self.write_end {
             let len = self
                 .channel
@@ -122,7 +132,7 @@ impl ReliableBincodeChannel {
         Ok(())
     }
 
-    async fn finish_read(&mut self) -> Result<(), Error> {
+    async fn finish_read(&mut self) -> Result<(), reliable_channel::Error> {
         while self.read_pos < self.read_end {
             let len = self
                 .channel
@@ -152,19 +162,19 @@ impl<T> ReliableTypedChannel<T> {
         }
     }
 
-    pub async fn flush(&mut self) -> Result<(), Error> {
+    pub async fn flush(&mut self) -> Result<(), reliable_channel::Error> {
         self.channel.flush().await
     }
 }
 
 impl<T: Serialize> ReliableTypedChannel<T> {
-    pub async fn send(&mut self, msg: &T) -> Result<(), Error> {
+    pub async fn send(&mut self, msg: &T) -> Result<(), SendError> {
         self.channel.send(msg).await
     }
 }
 
 impl<'a, T: Deserialize<'a>> ReliableTypedChannel<T> {
-    pub async fn recv(&'a mut self) -> Result<T, Error> {
+    pub async fn recv(&'a mut self) -> Result<T, RecvError> {
         self.channel.recv().await
     }
 }

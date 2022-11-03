@@ -9,21 +9,29 @@ use thiserror::Error;
 use crate::reliable_channel::{self, ReliableChannel};
 
 #[derive(Debug, Error)]
-pub enum Error {
+pub enum SendError {
     /// Fatal internal channel error.
     #[error("reliable channel error error: {0}")]
     ReliableChannelError(#[from] reliable_channel::Error),
-    /// Fatal, reading the next chunk would exceed the maximum buffer length, no progress can be
-    /// made.
+    /// Non-fatal error, no message is sent.
+    #[error("bincode serialization error: {0}")]
+    BincodeError(#[from] bincode::Error),
+}
+
+#[derive(Debug, Error)]
+pub enum RecvError {
+    /// Fatal internal channel error.
+    #[error("reliable channel error error: {0}")]
+    ReliableChannelError(#[from] reliable_channel::Error),
+    /// Fatal error, reading the next chunk would exceed the maximum buffer length, no progress can
+    /// be made.
     #[error("received chunk exceeds the configured max chunk length")]
     ChunkTooLarge,
-    /// Fatal, indicates corruption or protocol mismatch.
+    /// Fatal error, indicates corruption or protocol mismatch.
     #[error("Snappy serialization error: {0}")]
     SnapError(#[from] snap::Error),
-    /// Fatal during receive as it desynchronizes the stream, individual messages are not externally
-    /// length prefixed.
-    ///
-    /// Non-fatal during send, no message is sent.
+    /// Fatal error, it desynchronizes the stream, individual messages are not externally length
+    /// prefixed.
     #[error("bincode serialization error: {0}")]
     BincodeError(#[from] bincode::Error),
 }
@@ -81,7 +89,7 @@ impl CompressedBincodeChannel {
     ///
     /// This method is cancel safe, it will never partially send a message, and completes
     /// immediately upon successfully queuing a message to send.
-    pub async fn send<T: Serialize>(&mut self, msg: &T) -> Result<(), Error> {
+    pub async fn send<T: Serialize>(&mut self, msg: &T) -> Result<(), SendError> {
         let bincode_config = self.bincode_config();
 
         let serialized_len = bincode_config.serialized_size(msg)?;
@@ -98,7 +106,7 @@ impl CompressedBincodeChannel {
     /// reliable channel.
     ///
     /// This method is cancel safe.
-    pub async fn flush(&mut self) -> Result<(), Error> {
+    pub async fn flush(&mut self) -> Result<(), reliable_channel::Error> {
         self.write_send_chunk().await?;
         self.finish_write().await?;
         self.channel.flush().await?;
@@ -109,7 +117,7 @@ impl CompressedBincodeChannel {
     ///
     /// This method is cancel safe, it will never partially receive a message and will never drop a
     /// received message.
-    pub async fn recv<T: DeserializeOwned>(&mut self) -> Result<T, Error> {
+    pub async fn recv<T: DeserializeOwned>(&mut self) -> Result<T, RecvError> {
         let bincode_config = self.bincode_config();
 
         loop {
@@ -128,7 +136,7 @@ impl CompressedBincodeChannel {
             let compressed = self.read_buffer[0] != 0;
             let chunk_len = LittleEndian::read_u16(&self.read_buffer[1..3]);
             if chunk_len > self.max_chunk_len {
-                return Err(Error::ChunkTooLarge);
+                return Err(RecvError::ChunkTooLarge);
             }
             self.read_buffer.resize(chunk_len as usize + 3, 0);
             self.finish_read().await?;
@@ -136,7 +144,7 @@ impl CompressedBincodeChannel {
             if compressed {
                 let decompressed_len = decompress_len(&self.read_buffer[3..])?;
                 if decompressed_len > self.max_chunk_len as usize {
-                    return Err(Error::ChunkTooLarge);
+                    return Err(RecvError::ChunkTooLarge);
                 }
                 self.recv_chunk.resize(decompressed_len, 0);
                 self.decoder
@@ -151,16 +159,18 @@ impl CompressedBincodeChannel {
         }
     }
 
-    async fn write_send_chunk(&mut self) -> Result<(), Error> {
+    async fn write_send_chunk(&mut self) -> Result<(), reliable_channel::Error> {
         if !self.send_chunk.is_empty() {
             self.finish_write().await?;
 
             self.write_pos = 0;
             self.write_buffer
                 .resize(max_compress_len(self.send_chunk.len()) + 3, 0);
+            // Should not error, `write_buffer` is correctly sized and is less than `2^32 - 1`
             let compressed_len = self
                 .encoder
-                .compress(&self.send_chunk, &mut self.write_buffer[3..])?;
+                .compress(&self.send_chunk, &mut self.write_buffer[3..])
+                .expect("unexpected snap encoder error");
             self.write_buffer.truncate(compressed_len + 3);
             if compressed_len >= self.send_chunk.len() {
                 // If our compressed size is worse than our uncompressed size, write the original chunk
@@ -187,7 +197,7 @@ impl CompressedBincodeChannel {
         Ok(())
     }
 
-    async fn finish_write(&mut self) -> Result<(), Error> {
+    async fn finish_write(&mut self) -> Result<(), reliable_channel::Error> {
         while self.write_pos < self.write_buffer.len() {
             let len = self
                 .channel
@@ -198,7 +208,7 @@ impl CompressedBincodeChannel {
         Ok(())
     }
 
-    async fn finish_read(&mut self) -> Result<(), Error> {
+    async fn finish_read(&mut self) -> Result<(), reliable_channel::Error> {
         while self.read_pos < self.read_buffer.len() {
             let len = self
                 .channel
@@ -228,19 +238,19 @@ impl<T> CompressedTypedChannel<T> {
         }
     }
 
-    pub async fn flush(&mut self) -> Result<(), Error> {
+    pub async fn flush(&mut self) -> Result<(), reliable_channel::Error> {
         self.channel.flush().await
     }
 }
 
 impl<T: Serialize> CompressedTypedChannel<T> {
-    pub async fn send(&mut self, msg: &T) -> Result<(), Error> {
+    pub async fn send(&mut self, msg: &T) -> Result<(), SendError> {
         self.channel.send(msg).await
     }
 }
 
 impl<T: DeserializeOwned> CompressedTypedChannel<T> {
-    pub async fn recv(&mut self) -> Result<T, Error> {
+    pub async fn recv(&mut self) -> Result<T, RecvError> {
         self.channel.recv().await
     }
 }
