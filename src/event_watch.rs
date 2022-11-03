@@ -14,9 +14,9 @@ use futures::{
 /// Creates a multi-producer single-consumer stream of events with certain beneficial properties.
 ///
 /// If a receiver is waiting on a signaled event, calling `Sender::signal` will wakeup the receiver
-/// as normal.  However, if the receiver is *not* waiting on a signaled event and `Sender::signal`
+/// as normal. However, if the receiver is *not* waiting on a signaled event and `Sender::signal`
 /// has been called since the last time the `Receiver::wait` was called, then calling
-/// `Receiver::wait` again will immediately resolve.  In this way, the receiver is prevented from
+/// `Receiver::wait` again will immediately resolve. In this way, the receiver is prevented from
 /// possibly missing events.
 ///
 /// In other words, calling `Sender::signal` will always do one of two things:

@@ -31,9 +31,9 @@ pub enum Error {
 /// Wraps a `ReliableMessageChannel` and reliably sends a single message type serialized with
 /// `bincode` and compressed with `snap`.
 ///
-/// Messages are written in large blocks to aid compression.  Messages are serialized end to end,
-/// and when a block reaches the maximum configured size (or `flush` is called), the block is
-/// compressed and sent as a single message.
+/// Messages are written in large blocks to aid compression. Messages are serialized end to end, and
+/// when a block reaches the maximum configured size (or `flush` is called), the block is compressed
+/// and sent as a single message.
 ///
 /// This saves space from the compression and also from the reduced message header overhead per
 /// individual message.

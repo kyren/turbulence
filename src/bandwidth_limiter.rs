@@ -34,7 +34,7 @@ impl<R: Runtime> BandwidthLimiter<R> {
         }
     }
 
-    /// Actually update the amount of available bandwidth.  Additional available bytes are not added
+    /// Actually update the amount of available bandwidth. Additional available bytes are not added
     /// until this method is called to add them.
     pub fn update_available(&mut self) {
         let now = self.runtime.now();
@@ -48,7 +48,7 @@ impl<R: Runtime> BandwidthLimiter<R> {
     }
 
     /// The bandwidth limiter only needs to limit outgoing packets being sent at all, not their
-    /// size, so this returns true if a non-negative amount of bytes is available.  If a packet is
+    /// size, so this returns true if a non-negative amount of bytes is available. If a packet is
     /// sent that is larger than the available bytes, the available bytes will go negative and this
     /// will no longer return true.
     pub fn bytes_available(&self) -> bool {

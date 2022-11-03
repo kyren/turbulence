@@ -13,11 +13,11 @@
 - Make `BufferPacketPool` derive Copy if the type it wraps is Copy.
 - Simplify `Runtime` trait to not require an explicit `Interval`.
   `Runtime::Delay` wasn't even *used* prior to this, but it is the only timing
-  requirement now and has been renamed to `Sleep` to match tokio 0.3.  Neither
+  requirement now and has been renamed to `Sleep` to match tokio 0.3. Neither
   tokio nor smol allocate as part of creating a `Sleep` / `Timer`, so having an
   explicit `Interval` is not really necessary to avoid e.g. allocation, and the
-  way tokio's `Interval` works was not ideal anyway and we shouldn't rely on how
-  it is implemented.
+  way tokio's `Interval` works was not ideal anyway and we shouldn't rely on
+  how it is implemented.
 
 ## [0.2]
 - Correctness fixes for unreliable message lengths
@@ -26,7 +26,7 @@
 - Performance improvements and fixes for internal `event_watch` events channel.
 - [API Change]: Update to bincode 1.3, no longer using the deprecated bincode API
 - [API Change]: Return `Result` in `MessageChannels` async methods on
-  disconnection, panicking is never appropriate for a network error.  Instead,
+  disconnection, panicking is never appropriate for a network error. Instead,
   the panicking version of methods in `MessageChannels` *only* panic on
   unregistered message types.
 

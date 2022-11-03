@@ -26,7 +26,7 @@ use crate::{
     windows::{stream_gt, AckResult, RecvWindow, SendWindow, StreamPos},
 };
 
-/// All reliable channel errors are fatal.  Once any error is returned all further reliable channel
+/// All reliable channel errors are fatal. Once any error is returned all further reliable channel
 /// method calls will return `Error::Shutdown` errors.
 #[derive(Debug, Error)]
 pub enum Error {
@@ -43,19 +43,18 @@ pub struct Settings {
     /// The target outgoing bandwidth, in bytes / sec.
     ///
     /// This is the target bandwidth usage for all sent packets, not the target bandwidth for the
-    /// actual underlying stream.  Both sends and resends (but not currently acks) count against
-    /// this bandwidth limit, so this is designed to limit the amount of traffic this channel
-    /// produces.
+    /// actual underlying stream. Both sends and resends (but not currently acks) count against this
+    /// bandwidth limit, so this is designed to limit the amount of traffic this channel produces.
     pub bandwidth: u32,
-    /// The maximum amount of bandwidth credit that can accumulate.  This is the maximum bytes that
+    /// The maximum amount of bandwidth credit that can accumulate. This is the maximum bytes that
     /// will be sent in a single burst.
     pub burst_bandwidth: u32,
     /// The size of the incoming ring buffer.
     pub recv_window_size: u32,
     /// The size of the outgoing ring buffer.
     pub send_window_size: u32,
-    /// The sending side of a channel will always send a constant amount of bytes more than what it
-    /// believes the remote's recv window actually is, to avoid stalling the connection.  This
+    /// The sending side of a channel will always send a constant amount of bytes more than what
+    /// it believes the remote's recv window actually is, to avoid stalling the connection. This
     /// controls the amount past the recv window which will be sent, and also the initial amount of
     /// data that will be sent when the connection starts up.
     pub init_send: u32,
@@ -190,7 +189,7 @@ impl ReliableChannel {
     /// Ensure that any previously written data will be fully sent.
     ///
     /// Returns once the sending task has been notified to wake up and will send the written data
-    /// promptly.  Does *not* actually wait for outgoing packets to be sent before returning.
+    /// promptly. Does *not* actually wait for outgoing packets to be sent before returning.
     pub async fn flush(&mut self) -> Result<(), Error> {
         if self.task.is_terminated() {
             return Err(Error::Shutdown);
@@ -203,7 +202,7 @@ impl ReliableChannel {
         Ok(())
     }
 
-    /// Read any available data.  Returns once at least one byte of data has been read.
+    /// Read any available data. Returns once at least one byte of data has been read.
     pub async fn read(&mut self, data: &mut [u8]) -> Result<usize, Error> {
         if self.task.is_terminated() {
             return Err(Error::Shutdown);
@@ -360,11 +359,11 @@ where
                 }
             }
 
-            // Don't let the connection stall.  If we are now out of unacked ranges to resend and we
-            // believe the remote has no recv left, we will receive no acknowledgments to let us
-            // update the remote receive window.  Keep sending a small amount of data past the
-            // remote receive window, even if it is unacked, so that we are notified when the remote
-            // starts processing data again.
+            // Don't let the connection stall. If we are now out of unacked ranges to resend and
+            // we believe the remote has no recv left, we will receive no acknowledgments to let us
+            // update the remote receive window. Keep sending a small amount of data past the remote
+            // receive window, even if it is unacked, so that we are notified when the remote starts
+            // processing data again.
             if self.unacked_ranges.is_empty() && self.remote_recv_available == 0 {
                 self.remote_recv_available = self.settings.init_send;
             }

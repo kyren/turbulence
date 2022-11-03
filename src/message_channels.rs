@@ -26,7 +26,7 @@ use crate::{
 };
 
 // TODO: Message channels are currently always full-duplex, because the unreliable / reliable
-// channels backing them are always full-duplex.  We could add configuration to limit a channel to
+// channels backing them are always full-duplex. We could add configuration to limit a channel to
 // send or receive only, and to error if the remote sends to a send-only channel.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MessageChannelSettings {
@@ -190,8 +190,8 @@ pub enum TryAsyncMessageError {
 /// Manages a set of channels through a packet multiplexer, where each channel is associated with
 /// exactly one message type.
 ///
-/// Acts as a bridge between the sync and async worlds.  Provides sync methods to send and receive
-/// messages that do not block or error.  Has simplified error handling, is if any of the backing
+/// Acts as a bridge between the sync and async worlds. Provides sync methods to send and receive
+/// messages that do not block or error. Has simplified error handling, is if any of the backing
 /// tasks end in an error or if the backing packet channels are dropped, the `MessageChannels` will
 /// permanently go into a "disconnected" state.
 ///
@@ -217,7 +217,7 @@ impl MessageChannels {
     /// Consume this `MessageChannels` and receive the networking task shutdown error.
     ///
     /// If this `MessageChannels` is disconnected, returns the error that caused it to become
-    /// disconnected.  If it is not disconnected, it will become disconnected by calling this and
+    /// disconnected. If it is not disconnected, it will become disconnected by calling this and
     /// return that error.
     pub async fn recv_err(self) -> ChannelTaskError {
         drop(self.channels);
@@ -230,8 +230,8 @@ impl MessageChannels {
     /// immediately send any buffered messages.
     ///
     /// If the mpsc channel for this message type is full, will return the message that was sent
-    /// back to the caller.  If the message was successfully put onto the outgoing mpsc channel,
-    /// will return None.
+    /// back to the caller. If the message was successfully put onto the outgoing mpsc channel, will
+    /// return None.
     ///
     /// # Panics
     /// Panics if this message type was not registered with the `MessageChannelsBuilder` used to
@@ -260,8 +260,8 @@ impl MessageChannels {
         })
     }
 
-    /// Any async version of `MessageChannels::send`, sends the given message on the channel
-    /// associated with its message type but waits if the channel is full.  Like
+    /// Any async version of `MessageChannels::send`, sends the given message on the
+    /// channel associated with its message type but waits if the channel is full. Like
     /// `MessageChannels::send`, `MessageChannels::flush` must still be called afterwards in order
     /// to ensure delivery.
     ///
@@ -306,7 +306,7 @@ impl MessageChannels {
         }
     }
 
-    /// Immediately send any buffered messages for this message type.  Messages may not be delivered
+    /// Immediately send any buffered messages for this message type. Messages may not be delivered
     /// unless `flush` is called after any `send` calls.
     ///
     /// # Panics
@@ -471,9 +471,9 @@ where
     let (flush_sender, mut flush_receiver) = event_watch::channel();
 
     // TODO: Ideally, you would want all the channel types to implement a single trait and not have
-    // to repeat this task implementation for all of them.  Unfortunately, for the time being, doing
+    // to repeat this task implementation for all of them. Unfortunately, for the time being, doing
     // so would require that the typed channels not use async methods or that the trait would box
-    // the returned futures, because rust doesn't yet support async in traits.  Another possibility
+    // the returned futures, because rust doesn't yet support async in traits. Another possibility
     // would be to have the channels implement poll style traits like Stream and Sink, currently
     // this is waiting mostly on being able to use `BiLock` in the reliable channel.
     let (channel_task, statistics) = match settings.channel_mode {

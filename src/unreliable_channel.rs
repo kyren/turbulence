@@ -42,7 +42,7 @@ pub enum RecvError {
 pub struct Settings {
     /// The target outgoing bandwidth, in bytes / sec.
     pub bandwidth: u32,
-    /// The maximum amount of bandwidth credit that can accumulate.  This is the maximum bytes that
+    /// The maximum amount of bandwidth credit that can accumulate. This is the maximum bytes that
     /// will be sent in a single burst.
     pub burst_bandwidth: u32,
 }

@@ -10,8 +10,8 @@ pub type StreamPos = Wrapping<u32>;
 /// Cannot be used to implement `Ord` because this operation is not transitive.
 ///
 /// In the case of a tie, where `a` != `b` but `a - b == b - a` (in other words, where both values
-/// are exactly opposite each other), there is no sensible wrapping order for `a` and `b`.  In order
-/// use `stream_cmp` sensibly, we must ensure that `StreamPos` values can never be more than
+/// are exactly opposite each other), there is no sensible wrapping order for `a` and `b`. In
+/// order use `stream_cmp` sensibly, we must ensure that `StreamPos` values can never be more than
 /// `u32::MAX / 2` (or 2^31 - 1) apart.
 pub fn stream_cmp(a: &StreamPos, b: &StreamPos) -> Ordering {
     let ord = (b - a).cmp(&(a - b));
@@ -48,8 +48,8 @@ pub enum AckResult {
 /// Coaelesces and buffers outgoing stream data up to a configured window capacity and keeps it
 /// available to resend until it is acknowledged from the remote.
 pub struct SendWindow {
-    // The capacity here is hard-coded for testability.  We could use `buffer.capacity()` here
-    // instead, but tests assume that the capacity is the requested capacity, and
+    // The capacity here is hard-coded for testability. We could use `buffer.capacity()`
+    // here instead, but tests assume that the capacity is the requested capacity, and
     // `VecDeque::with_capacity` only guarantees a minimum capacity.
     capacity: u32,
     buffer: VecDeque<u8>,
@@ -58,9 +58,9 @@ pub struct SendWindow {
     // The number of bytes at the beginning of the outgoing buffer that have already been sent, but
     // are being kept in case they need to be retransmitted.
     sent: u32,
-    // The set of sent but un-acked stream ranges.  All of these ranges should be non-empty and
-    // non-overlapping, and the list should remain sorted in wrap-around stream ordering, and all of
-    // the ranges should fall within the "sent" portion of the buffer.
+    // The set of sent but un-acked stream ranges. All of these ranges should be non-empty and non-
+    // overlapping, and the list should remain sorted in wrap-around stream ordering, and all of the
+    // ranges should fall within the "sent" portion of the buffer.
     unacked_ranges: Vec<(StreamPos, StreamPos)>,
 }
 
@@ -83,14 +83,16 @@ impl SendWindow {
         self.capacity - self.buffer.len() as u32
     }
 
-    /// Write the given data to the end of the send buffer, up to the available amount to be written.
+    /// Write the given data to the end of the send buffer, up to the available amount to be
+    /// written.
     pub fn write(&mut self, data: &[u8]) -> usize {
         let amt = (self.capacity as usize - self.buffer.len()).min(data.len());
         self.buffer.extend(&data[0..amt]);
         amt
     }
 
-    /// The stream position of the next byte of data that would be sent with a call to `SendWindow::send`.
+    /// The stream position of the next byte of data that would be sent with a call to
+    /// `SendWindow::send`.
     pub fn send_pos(&self) -> StreamPos {
         self.send_pos
     }
@@ -102,10 +104,10 @@ impl SendWindow {
     /// Send any pending written data up to the size of the provided buffer, and add this sent range
     /// as an unacked range.
     ///
-    /// Returns the stream range of the sent data.  Not all of the provided buffer is necessarily
+    /// Returns the stream range of the sent data. Not all of the provided buffer is necessarily
     /// written, only the data from the start of the buffer to the length of the returned stream
-    /// range is actually written.  Will not return a zero sized range, if no data is available to
-    /// be sent or the provided buffer is empty, will return None.
+    /// range is actually written. Will not return a zero sized range, if no data is available to be
+    /// sent or the provided buffer is empty, will return None.
     pub fn send(&mut self, data: &mut [u8]) -> Option<(StreamPos, StreamPos)> {
         let send_amt = (self.buffer.len() - self.sent as usize).min(data.len()) as u32;
         if send_amt == 0 {
@@ -125,14 +127,14 @@ impl SendWindow {
         }
     }
 
-    /// Returns the stream position after the last contiguously acked sent data.  The stream data
+    /// Returns the stream position after the last contiguously acked sent data. The stream data
     /// from `unacked_start` to `send_pos` is sent but not yet fully acked, and is retained in the
     /// send buffer.
     pub fn unacked_start(&self) -> StreamPos {
         self.send_pos - Wrapping(self.sent)
     }
 
-    /// Fetches a portion of the unacked region of the send buffer.  Range must be within
+    /// Fetches a portion of the unacked region of the send buffer. Range must be within
     /// [unacked_start, send_pos].
     pub fn get_unacked(&self, start: StreamPos, data: &mut [u8]) {
         let unacked_start = self.unacked_start();
@@ -146,7 +148,7 @@ impl SendWindow {
     /// up send buffer space.
     ///
     /// Acknowledged ranges are allowed to be equal to or shorter than the sent ranges, but they
-    /// *must* start with the same stream position.  Acked ranges will be ignored if they are empty
+    /// *must* start with the same stream position. Acked ranges will be ignored if they are empty
     /// or do not start with the same position as a previously sent, unacked range.
     pub fn ack_range(&mut self, start: StreamPos, end: StreamPos) -> AckResult {
         match self
@@ -194,8 +196,8 @@ impl SendWindow {
 /// Receives stream data up to a configured window capacity, in any order, and combines it into an
 /// ordered stream.
 pub struct RecvWindow {
-    // The capacity here is hard-coded for testability.  We could use `buffer.capacity()` here
-    // instead, but tests assume that the capacity is the requested capacity, and
+    // The capacity here is hard-coded for testability. We could use `buffer.capacity()`
+    // here instead, but tests assume that the capacity is the requested capacity, and
     // `VecDeque::with_capacity` only guarantees a minimum capacity.
     capacity: u32,
     // The current stream position of the first byte of the incoming buffer after the "ready" bytes.
@@ -204,11 +206,11 @@ pub struct RecvWindow {
     ready: u32,
     buffer: VecDeque<u8>,
     // An ordered list (in wrap-around stream positions) of non-contiguous received regions of data
-    // in the buffer that do not connect with the "ready" data.  This is used to receive
-    // out-of-ordered data and allow it to be recombined into an in-order stream.
+    // in the buffer that do not connect with the "ready" data. This is used to receive out-of-
+    // ordered data and allow it to be recombined into an in-order stream.
     //
     // The invariants here are:
-    // 1) The list must contain non-overlapping, non-"touching" regions.  In other words, the end of
+    // 1) The list must contain non-overlapping, non-"touching" regions. In other words, the end of
     //    unready region i cannot be the equal to or greater than the start of unready region i + 1.
     // 2) The list must contain no empty regions, the end of any unready region must be strictly
     //    greater than the beginning.
@@ -246,7 +248,7 @@ impl RecvWindow {
         read_amt
     }
 
-    /// The stream position where no more data could be received.  This window will move forward as
+    /// The stream position where no more data could be received. This window will move forward as
     /// data is read.
     pub fn window_end(&self) -> StreamPos {
         self.recv_pos + Wrapping(self.capacity - self.ready)
@@ -256,7 +258,7 @@ impl RecvWindow {
     /// successfully stored.
     ///
     /// If redundant data is received, all redundant data will be returned as successfully stored,
-    /// even data that has already been read out.  It will *not* be checked for consistency with
+    /// even data that has already been read out. It will *not* be checked for consistency with
     /// existing data, it will simply be ignored and assumed to be identical.
     ///
     /// The returned upper bound will never be beyond the current window end, any data that falls
@@ -264,8 +266,8 @@ impl RecvWindow {
     ///
     /// The range formed by the start position and the returned upper bound will never be empty, it
     /// will either be a non-empty range of successfully received data or this method will return
-    /// None.  The range formed by the start position and the returned upper bound will also never
-    /// be larger than the provided data, it will either be equal to or smaller.
+    /// None. The range formed by the start position and the returned upper bound will also never be
+    /// larger than the provided data, it will either be equal to or smaller.
     ///
     /// Received data may not be made immediately available for read if it is not contiguous with
     /// the existing ready data.
@@ -290,7 +292,7 @@ impl RecvWindow {
         }
 
         // `copy_start_pos` is the stream position at either the given `start_pos`, or the current
-        // receive position, whichever is greater.  We do not copy data that has already been
+        // receive position, whichever is greater. We do not copy data that has already been
         // received, so this is where we will begin copying.
         let copy_start_pos = if stream_gt(&self.recv_pos, &start_pos) {
             self.recv_pos
@@ -299,7 +301,7 @@ impl RecvWindow {
         };
 
         // We calculate the `end_pos` as being either the previous `end_pos` or the stream position
-        // at the maximum capacity of the receive buffer.  We should not read more data than the
+        // at the maximum capacity of the receive buffer. We should not read more data than the
         // requested buffer capacity can hold.
         let end_pos = if stream_lt(&end_pos, &recv_end_pos) {
             end_pos
@@ -363,7 +365,7 @@ impl RecvWindow {
             self.recv_pos = end;
         } else {
             // If this received region does not touch the end of the ready block, we just need to
-            // combine this with the other unready regions to maintain the invariants.  It must be
+            // combine this with the other unready regions to maintain the invariants. It must be
             // combined with any overlapping unready regions or any unready regions that are exactly
             // next to each other.
 

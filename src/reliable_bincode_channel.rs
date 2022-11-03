@@ -24,7 +24,7 @@ pub enum Error {
 /// Wraps a `ReliableChannel` together with an internal buffer to allow easily sending message types
 /// serialized with `bincode`.
 ///
-/// Messages are guaranteed to arrive, and are guaranteed to be in order.  Messages have a maximum
+/// Messages are guaranteed to arrive, and are guaranteed to be in order. Messages have a maximum
 /// length, but this maximum size can be larger than the size of an individual packet.
 pub struct ReliableBincodeChannel {
     channel: ReliableChannel,
@@ -57,7 +57,7 @@ impl ReliableBincodeChannel {
     /// Write the given message to the reliable channel.
     ///
     /// In order to ensure that messages are sent in a timely manner, `flush` must be called after
-    /// calling this method.  Without calling `flush`, any pending writes will not be sent until the
+    /// calling this method. Without calling `flush`, any pending writes will not be sent until the
     /// next automatic sender task wakeup.
     ///
     /// This method is cancel safe, it will never partially send a message, though canceling it may
