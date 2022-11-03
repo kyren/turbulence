@@ -27,7 +27,7 @@ use crate::{
 };
 
 /// All reliable channel errors are fatal. Once any error is returned all further reliable channel
-/// method calls will return `Error::Shutdown` errors.
+/// method calls will return `Err(Error::Shutdown)`.
 #[derive(Debug, Error)]
 pub enum Error {
     #[error("incoming or outgoing packet channel has been disconnected")]

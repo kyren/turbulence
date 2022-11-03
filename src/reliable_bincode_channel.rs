@@ -22,8 +22,8 @@ pub enum RecvError {
     /// Fatal internal channel error.
     #[error("reliable channel error: {0}")]
     ReliableChannelError(#[from] reliable_channel::Error),
-    /// Fatal, reading the next message would exceed the maximum buffer length, no progress can
-    /// be made.
+    /// Fatal error, reading the next message would exceed the maximum buffer length, no progress
+    /// can be made.
     #[error("received message exceeds the configured max message length")]
     PrefixTooLarge,
     /// Non-fatal error, message is skipped.
