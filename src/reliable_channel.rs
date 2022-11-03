@@ -210,8 +210,8 @@ impl ReliableChannel {
 
     /// Read any available data. Returns once at least one byte of data has been read.
     ///
-    /// This method is cancel safe, it completes immediately once any amount of data is read, dropping
-    /// an incomplete future will have no effect.
+    /// This method is cancel safe, it completes immediately once any amount of data is read,
+    /// dropping an incomplete future will have no effect.
     pub async fn read(&mut self, data: &mut [u8]) -> Result<usize, Error> {
         if self.task.is_terminated() {
             return Err(Error::Shutdown);
