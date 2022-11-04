@@ -11,7 +11,7 @@ use std::{
 
 use cache_padded::CachePadded;
 
-struct RingBuffer {
+pub struct RingBuffer {
     buffer: NonNull<MaybeUninit<u8>>,
     capacity: usize,
     head: CachePadded<AtomicUsize>,
@@ -19,9 +19,9 @@ struct RingBuffer {
 }
 
 impl RingBuffer {
-    fn new(capacity: usize) -> Self {
+    pub fn new(capacity: usize) -> (Writer, Reader) {
         assert!(capacity != 0);
-        Self {
+        let buffer = Arc::new(Self {
             buffer: unsafe {
                 NonNull::new(alloc(Layout::array::<MaybeUninit<u8>>(capacity).unwrap())
                     as *mut MaybeUninit<u8>)
@@ -30,7 +30,25 @@ impl RingBuffer {
             capacity,
             head: CachePadded::new(AtomicUsize::new(0)),
             tail: CachePadded::new(AtomicUsize::new(0)),
-        }
+        });
+
+        let writer = Writer(buffer.clone());
+        let reader = Reader(buffer);
+        (writer, reader)
+    }
+
+    pub fn write_available(&self) -> usize {
+        let head = self.head.load(Ordering::Acquire);
+        let tail = self.tail.load(Ordering::Acquire);
+
+        head_to_tail(self.capacity, head, tail)
+    }
+
+    pub fn read_available(&self) -> usize {
+        let head = self.head.load(Ordering::Acquire);
+        let tail = self.tail.load(Ordering::Acquire);
+
+        tail_to_head(self.capacity, tail, head)
     }
 }
 
@@ -48,21 +66,11 @@ impl Drop for RingBuffer {
 unsafe impl Send for RingBuffer {}
 unsafe impl Sync for RingBuffer {}
 
-pub fn create(capacity: usize) -> (Writer, Reader) {
-    let buffer = Arc::new(RingBuffer::new(capacity));
-    let writer = Writer(buffer.clone());
-    let reader = Reader(buffer);
-    (writer, reader)
-}
-
 pub struct Writer(Arc<RingBuffer>);
 
 impl Writer {
     pub fn available(&self) -> usize {
-        let head = self.0.head.load(Ordering::Acquire);
-        let tail = self.0.tail.load(Ordering::Acquire);
-
-        head_to_tail(self.0.capacity, head, tail)
+        self.0.write_available()
     }
 
     pub fn write(&mut self, mut offset: usize, mut data: &[u8]) -> usize {
@@ -120,16 +128,17 @@ impl Writer {
 
         offset
     }
+
+    pub fn buffer(&self) -> &RingBuffer {
+        &self.0
+    }
 }
 
 pub struct Reader(Arc<RingBuffer>);
 
 impl Reader {
     pub fn available(&self) -> usize {
-        let head = self.0.head.load(Ordering::Acquire);
-        let tail = self.0.tail.load(Ordering::Acquire);
-
-        tail_to_head(self.0.capacity, tail, head)
+        self.0.read_available()
     }
 
     pub fn read(&self, mut offset: usize, mut data: &mut [u8]) -> usize {
@@ -187,6 +196,10 @@ impl Reader {
 
         offset
     }
+
+    pub fn buffer(&self) -> &RingBuffer {
+        &self.0
+    }
 }
 
 fn collapse_position(capacity: usize, pos: usize) -> usize {
@@ -235,7 +248,7 @@ mod tests {
 
     #[test]
     fn basic_read_write() {
-        let (mut writer, mut reader) = create(7);
+        let (mut writer, mut reader) = RingBuffer::new(7);
         let mut buffer = [0; 7];
 
         assert_eq!(writer.available(), 7);
@@ -293,7 +306,7 @@ mod tests {
 
     #[test]
     fn threaded_read_write() {
-        let (mut writer, mut reader) = create(64);
+        let (mut writer, mut reader) = RingBuffer::new(64);
 
         let a = thread::spawn(move || {
             let mut b = [0; 32];

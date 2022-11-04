@@ -1,6 +1,6 @@
 use std::{cmp::Ordering, num::Wrapping, u32};
 
-use crate::ring_buffer;
+use crate::ring_buffer::{self, RingBuffer};
 
 pub type StreamPos = Wrapping<u32>;
 
@@ -64,20 +64,15 @@ pub enum AckResult {
 }
 
 pub struct SendWindowWriter {
-    buffer: ring_buffer::Writer,
+    writer: ring_buffer::Writer,
 }
 
 impl SendWindowWriter {
-    /// The amount of data available to be written
-    pub fn write_available(&self) -> u32 {
-        self.buffer.available() as u32
-    }
-
     /// Write the given data to the end of the send buffer, up to the available amount to be
     /// written.
     pub fn write(&mut self, data: &[u8]) -> u32 {
-        let len = self.buffer.write(0, data);
-        self.buffer.advance(len);
+        let len = self.writer.write(0, data);
+        self.writer.advance(len);
         len as u32
     }
 }
@@ -85,7 +80,7 @@ impl SendWindowWriter {
 /// Coaelesces and buffers outgoing stream data up to a configured window capacity and keeps it
 /// available to resend until it is acknowledged from the remote.
 pub struct SendWindow {
-    buffer: ring_buffer::Reader,
+    reader: ring_buffer::Reader,
     // The stream position of the first byte of the outgoing buffer after the "sent" bytes.
     send_pos: StreamPos,
     // The number of bytes at the beginning of the outgoing buffer that have already been sent, but
@@ -102,16 +97,21 @@ impl SendWindow {
         // Any more than this and the unacked list might not be totally ordered.
         assert!(capacity <= u32::MAX / 2);
 
-        let (writer, reader) = ring_buffer::create(capacity as usize);
+        let (writer, reader) = RingBuffer::new(capacity as usize);
         (
             SendWindow {
-                buffer: reader,
+                reader,
                 send_pos: stream_start,
                 sent: 0,
                 unacked_ranges: Vec::new(),
             },
-            SendWindowWriter { buffer: writer },
+            SendWindowWriter { writer },
         )
+    }
+
+    /// The amount of data available to be written
+    pub fn write_available(&self) -> u32 {
+        self.reader.buffer().write_available() as u32
     }
 
     /// The stream position of the next byte of data that would be sent with a call to
@@ -121,7 +121,7 @@ impl SendWindow {
     }
 
     pub fn send_available(&self) -> u32 {
-        self.buffer.available() as u32 - self.sent
+        self.reader.available() as u32 - self.sent
     }
 
     /// Send any pending written data up to the size of the provided buffer, and add this sent range
@@ -132,12 +132,12 @@ impl SendWindow {
     /// range is actually written. Will not return a zero sized range, if no data is available to be
     /// sent or the provided buffer is empty, will return None.
     pub fn send(&mut self, data: &mut [u8]) -> Option<(StreamPos, StreamPos)> {
-        let send_amt = (self.buffer.available() - self.sent as usize).min(data.len()) as u32;
+        let send_amt = (self.reader.available() - self.sent as usize).min(data.len()) as u32;
         if send_amt == 0 {
             None
         } else {
             assert_eq!(
-                self.buffer
+                self.reader
                     .read(self.sent as usize, &mut data[0..send_amt as usize]),
                 send_amt as usize,
             );
@@ -164,7 +164,7 @@ impl SendWindow {
     pub fn get_unacked(&self, start: StreamPos, data: &mut [u8]) {
         let unacked_start = self.unacked_start();
         let buf_start = (start - unacked_start).0 as usize;
-        assert_eq!(self.buffer.read(buf_start as usize, data), data.len());
+        assert_eq!(self.reader.read(buf_start as usize, data), data.len());
     }
 
     /// Acknowledge the receipt of the given stream range from the remote, and thus potentially free
@@ -189,11 +189,11 @@ impl SendWindow {
                         if start == unacked_start {
                             assert_eq!(i, 0);
                             if self.unacked_ranges.is_empty() {
-                                self.buffer.advance(self.sent as usize);
+                                self.reader.advance(self.sent as usize);
                                 self.sent = 0;
                             } else {
                                 let acked_amt = (self.unacked_ranges[0].0 - start).0;
-                                self.buffer.advance(acked_amt as usize);
+                                self.reader.advance(acked_amt as usize);
                                 self.sent -= acked_amt;
                             }
                         }
@@ -202,7 +202,7 @@ impl SendWindow {
                         if start == unacked_start {
                             assert_eq!(i, 0);
                             let acked_amt = (end - start).0;
-                            self.buffer.advance(acked_amt as usize);
+                            self.reader.advance(acked_amt as usize);
                             self.sent -= acked_amt;
                         }
 
@@ -217,20 +217,15 @@ impl SendWindow {
 }
 
 pub struct RecvWindowReader {
-    buffer: ring_buffer::Reader,
+    reader: ring_buffer::Reader,
 }
 
 impl RecvWindowReader {
-    /// The amount of contiguous data available to be read
-    pub fn read_available(&self) -> u32 {
-        self.buffer.available() as u32
-    }
-
     /// Read any ready data off of the beginning of the read buffer and return the number of bytes
     /// read.
     pub fn read(&mut self, data: &mut [u8]) -> u32 {
-        let len = self.buffer.read(0, data);
-        self.buffer.advance(len);
+        let len = self.reader.read(0, data);
+        self.reader.advance(len);
         len as u32
     }
 }
@@ -238,7 +233,7 @@ impl RecvWindowReader {
 /// Receives stream data up to a configured window capacity, in any order, and combines it into an
 /// ordered stream.
 pub struct RecvWindow {
-    buffer: ring_buffer::Writer,
+    writer: ring_buffer::Writer,
     // The current stream position of the first byte of the incoming buffer after the "ready" bytes.
     recv_pos: StreamPos,
     // An ordered list (in wrap-around stream positions) of non-contiguous received regions of data
@@ -260,21 +255,26 @@ impl RecvWindow {
         // Any more than this and the unready list might not be totally ordered.
         assert!(capacity <= u32::MAX / 2);
 
-        let (writer, reader) = ring_buffer::create(capacity as usize);
+        let (writer, reader) = RingBuffer::new(capacity as usize);
         (
             RecvWindow {
-                buffer: writer,
+                writer,
                 recv_pos: stream_start,
                 unready: Vec::new(),
             },
-            RecvWindowReader { buffer: reader },
+            RecvWindowReader { reader },
         )
+    }
+
+    /// The amount of contiguous data available to be read
+    pub fn read_available(&self) -> u32 {
+        self.writer.buffer().read_available() as u32
     }
 
     /// The stream position where no more data could be received. This window will move forward as
     /// data is read.
     pub fn window_end(&self) -> StreamPos {
-        self.recv_pos + Wrapping(self.buffer.available() as u32)
+        self.recv_pos + Wrapping(self.writer.available() as u32)
     }
 
     /// Receive a new block of data and return the upper bound of the stream range that was
@@ -299,7 +299,7 @@ impl RecvWindow {
 
         // `recv_end_pos` is the stream position at the end of the maximum capacity of the receive
         // buffer.
-        let recv_end_pos = self.recv_pos + Wrapping(self.buffer.available() as u32);
+        let recv_end_pos = self.recv_pos + Wrapping(self.writer.available() as u32);
 
         // `end_pos` is the stream position at the end of the input data
         let end_pos = start_pos + Wrapping(data.len() as u32);
@@ -349,7 +349,7 @@ impl RecvWindow {
         let buf_end = (end_pos - self.recv_pos).0 as usize;
 
         assert_eq!(
-            self.buffer.write(
+            self.writer.write(
                 buf_start,
                 &data[data_start..data_start + buf_end - buf_start],
             ),
@@ -383,7 +383,7 @@ impl RecvWindow {
                 end_pos
             };
 
-            self.buffer.advance((end - self.recv_pos).0 as usize);
+            self.writer.advance((end - self.recv_pos).0 as usize);
             self.recv_pos = end;
         } else {
             // If this received region does not touch the end of the ready block, we just need to
@@ -439,7 +439,7 @@ mod tests {
         let mut send_data = [0; 16];
         let (mut send_window, mut send_window_writer) = SendWindow::new(7, stream_start);
 
-        assert_eq!(send_window_writer.write_available(), 7);
+        assert_eq!(send_window_writer.writer.available(), 7);
         assert_eq!(send_window.send_pos(), stream_start);
 
         assert_eq!(send_window_writer.write(&write_data[0..4]), 4);
@@ -458,14 +458,14 @@ mod tests {
         }
         assert_eq!(send_window.send_pos(), stream_start + Wrapping(6));
 
-        assert_eq!(send_window_writer.write_available(), 0);
+        assert_eq!(send_window_writer.writer.available(), 0);
 
         assert_eq!(
             send_window.ack_range(stream_start, stream_start + Wrapping(4)),
             AckResult::PartialAck(stream_start + Wrapping(6))
         );
 
-        assert_eq!(send_window_writer.write_available(), 4);
+        assert_eq!(send_window_writer.writer.available(), 4);
         assert_eq!(send_window_writer.write(&write_data[7..16]), 4);
 
         assert_eq!(
@@ -473,7 +473,7 @@ mod tests {
             AckResult::Ack
         );
 
-        assert_eq!(send_window_writer.write_available(), 2);
+        assert_eq!(send_window_writer.writer.available(), 2);
         assert_eq!(send_window_writer.write(&write_data[11..16]), 2);
 
         assert_eq!(send_window.send_available(), 7);
@@ -525,7 +525,7 @@ mod tests {
             AckResult::Ack
         );
 
-        assert_eq!(send_window_writer.write_available(), 3);
+        assert_eq!(send_window_writer.writer.available(), 3);
         assert_eq!(send_window.send_pos(), stream_start + Wrapping(13));
         assert_eq!(send_window_writer.write(&write_data[14..16]), 2);
 
@@ -538,7 +538,7 @@ mod tests {
             AckResult::Ack
         );
 
-        assert_eq!(send_window_writer.write_available(), 5);
+        assert_eq!(send_window_writer.writer.available(), 5);
 
         assert_eq!(send_window.send_available(), 2);
         assert_eq!(
@@ -558,7 +558,7 @@ mod tests {
             AckResult::Ack,
         );
 
-        assert_eq!(send_window_writer.write_available(), 7);
+        assert_eq!(send_window_writer.writer.available(), 7);
     }
 
     #[test]
@@ -599,7 +599,7 @@ mod tests {
             Some(stream_start + Wrapping(12))
         );
         assert_eq!(recv_window.window_end(), stream_start + Wrapping(12));
-        assert_eq!(recv_window_reader.read_available(), 7);
+        assert_eq!(recv_window_reader.reader.available(), 7);
 
         assert_eq!(recv_window_reader.read(&mut read_data[5..10]), 5);
         for i in 5..10 {

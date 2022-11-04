@@ -1,20 +1,12 @@
-use std::{
-    future::Future,
-    i16,
-    num::Wrapping,
-    pin::Pin,
-    sync::Arc,
-    task::{Poll, Waker},
-    time::Duration,
-    u32,
-};
+use std::{i16, num::Wrapping, pin::Pin, sync::Arc, task::Poll, time::Duration, u32};
 
 use byteorder::{ByteOrder, LittleEndian};
 use futures::{
     channel::mpsc,
     future::{self, Fuse, FusedFuture, RemoteHandle},
-    lock::{Mutex, MutexGuard},
-    select, select_biased, FutureExt, StreamExt,
+    select, select_biased,
+    task::AtomicWaker,
+    FutureExt, StreamExt,
 };
 use rustc_hash::FxHashMap;
 use thiserror::Error;
@@ -77,9 +69,9 @@ pub struct Settings {
 
 /// Turns a stream of unreliable, unordered packets into a reliable in-order stream of data.
 pub struct ReliableChannel {
-    // TODO: It would be nicer to use `BiLock` once it is stable in `futures`, and would allow
-    // `ReliableChannel` to implement `AsyncRead` and `AsyncWrite`.
-    shared: Arc<Mutex<Shared>>,
+    send_window_writer: SendWindowWriter,
+    recv_window_reader: RecvWindowReader,
+    shared: Arc<Shared>,
     task: Fuse<RemoteHandle<Error>>,
 }
 
@@ -111,15 +103,7 @@ impl ReliableChannel {
         let (recv_window, recv_window_reader) =
             RecvWindow::new(settings.recv_window_size, Wrapping(0));
 
-        let shared = Arc::new(Mutex::new(Shared {
-            send_window,
-            send_window_writer,
-            send_ready: None,
-            write_ready: None,
-            recv_window,
-            recv_window_reader,
-            read_ready: None,
-        }));
+        let shared = Arc::new(Shared::default());
 
         let bandwidth_limiter = BandwidthLimiter::new(
             runtime.clone(),
@@ -135,21 +119,23 @@ impl ReliableChannel {
             packet_pool,
             incoming,
             outgoing,
+            shared: shared.clone(),
+            send_window,
+            recv_window,
             resend_timer,
             remote_recv_available,
             unacked_ranges: FxHashMap::default(),
             rtt_estimate,
             bandwidth_limiter,
         };
-        let (remote, remote_handle) = {
-            let shared = Arc::clone(&shared);
-            async move { task.main_loop(shared).await.unwrap_err() }
-        }
-        .remote_handle();
+        let (remote, remote_handle) =
+            { async move { task.main_loop().await.unwrap_err() } }.remote_handle();
 
         runtime.spawn(remote);
 
         ReliableChannel {
+            send_window_writer,
+            recv_window_reader,
             shared,
             task: remote_handle.fuse(),
         }
@@ -168,26 +154,21 @@ impl ReliableChannel {
             return Err(Error::Shutdown);
         }
 
-        let shared = &self.shared;
-        let mut shared_lock_future = shared.lock();
-        let mut write_done =
-            future::poll_fn(|cx| match Pin::new(&mut shared_lock_future).poll(cx) {
-                Poll::Ready(mut shared_guard) => {
-                    let len = shared_guard.send_window_writer.write(data);
-                    if len > 0 {
-                        Poll::Ready(len)
-                    } else {
-                        shared_guard.write_ready = Some(cx.waker().clone());
-                        if let Some(send_ready) = shared_guard.send_ready.take() {
-                            send_ready.wake();
-                        }
-                        shared_lock_future = shared.lock();
-                        Poll::Pending
-                    }
+        let mut write_done = future::poll_fn({
+            let send_window_writer = &mut self.send_window_writer;
+            let shared = &self.shared;
+            move |cx| {
+                shared.write_ready.register(&cx.waker());
+                let len = send_window_writer.write(data);
+                if len > 0 {
+                    Poll::Ready(len)
+                } else {
+                    shared.send_ready.wake();
+                    Poll::Pending
                 }
-                Poll::Pending => Poll::Pending,
-            })
-            .fuse();
+            }
+        })
+        .fuse();
 
         select_biased! {
             error = &mut self.task => Err(error),
@@ -203,17 +184,12 @@ impl ReliableChannel {
     /// This method is cancel safe.
     pub async fn flush(&mut self) -> Result<(), Error> {
         if self.task.is_terminated() {
-            return Err(Error::Shutdown);
-        }
-
-        select_biased! {
-            error = &mut self.task => Err(error),
-            mut shared = self.shared.lock() => {
-                if let Some(send_ready) = shared.send_ready.take() {
-                    send_ready.wake();
-                }
-                Ok(())
-            }
+            Err(Error::Shutdown)
+        } else if let Some(error) = (&mut self.task).now_or_never() {
+            Err(error)
+        } else {
+            self.shared.send_ready.wake();
+            Ok(())
         }
     }
 
@@ -226,23 +202,20 @@ impl ReliableChannel {
             return Err(Error::Shutdown);
         }
 
-        let shared = &self.shared;
-        let mut shared_lock_future = shared.lock();
-        let mut read_done =
-            future::poll_fn(|cx| match Pin::new(&mut shared_lock_future).poll(cx) {
-                Poll::Ready(mut shared_guard) => {
-                    let len = shared_guard.recv_window_reader.read(data);
-                    if len > 0 {
-                        Poll::Ready(len)
-                    } else {
-                        shared_guard.read_ready = Some(cx.waker().clone());
-                        shared_lock_future = shared.lock();
-                        Poll::Pending
-                    }
+        let mut read_done = future::poll_fn({
+            let recv_window_reader = &mut self.recv_window_reader;
+            let shared = &self.shared;
+            move |cx| {
+                shared.read_ready.register(&cx.waker());
+                let len = recv_window_reader.read(data);
+                if len > 0 {
+                    Poll::Ready(len)
+                } else {
+                    Poll::Pending
                 }
-                Poll::Pending => Poll::Pending,
-            })
-            .fuse();
+            }
+        })
+        .fuse();
 
         select_biased! {
             error = &mut self.task => Err(error),
@@ -251,15 +224,11 @@ impl ReliableChannel {
     }
 }
 
+#[derive(Default)]
 struct Shared {
-    send_window: SendWindow,
-    send_window_writer: SendWindowWriter,
-    send_ready: Option<Waker>,
-    write_ready: Option<Waker>,
-
-    recv_window: RecvWindow,
-    recv_window_reader: RecvWindowReader,
-    read_ready: Option<Waker>,
+    send_ready: AtomicWaker,
+    write_ready: AtomicWaker,
+    read_ready: AtomicWaker,
 }
 
 struct UnackedRange<I> {
@@ -280,6 +249,9 @@ where
     incoming: mpsc::Receiver<P::Packet>,
     outgoing: mpsc::Sender<P::Packet>,
 
+    shared: Arc<Shared>,
+    send_window: SendWindow,
+    recv_window: RecvWindow,
     resend_timer: Pin<Box<Fuse<R::Sleep>>>,
     remote_recv_available: u32,
     unacked_ranges: FxHashMap<StreamPos, UnackedRange<R::Instant>>,
@@ -292,12 +264,12 @@ where
     R: Runtime,
     P: PacketPool,
 {
-    async fn main_loop(mut self, shared: Arc<Mutex<Shared>>) -> Result<(), Error> {
+    async fn main_loop(mut self) -> Result<(), Error> {
         loop {
-            enum WakeReason<'a, P> {
+            enum WakeReason<P> {
                 ResendTimer,
                 IncomingPacket(P),
-                SendAvailable(MutexGuard<'a, Shared>),
+                SendAvailable,
             }
 
             self.bandwidth_limiter.update_available();
@@ -316,8 +288,10 @@ where
                 }
                 .fuse();
 
+                let shared = &self.shared;
+                let send_window = &mut self.send_window;
                 let remote_recv_available = self.remote_recv_available;
-                let send_available = async {
+                let send_available = async move {
                     if remote_recv_available == 0 {
                         // Don't wake up at all for sending new data if we couldn't send anything
                         // anyway.
@@ -327,18 +301,15 @@ where
                     // Don't wake up for sending new data until we have bandwidth available.
                     bandwidth_limiter.delay_until_available().await;
 
-                    let mut shared_lock_future = shared.lock();
-                    future::poll_fn(|cx| match Pin::new(&mut shared_lock_future).poll(cx) {
-                        Poll::Ready(mut shared_guard) => {
-                            if shared_guard.send_window.send_available() > 0 {
-                                Poll::Ready(shared_guard)
+                    future::poll_fn({
+                        |cx| {
+                            shared.send_ready.register(cx.waker());
+                            if send_window.send_available() > 0 {
+                                Poll::Ready(())
                             } else {
-                                shared_guard.send_ready = Some(cx.waker().clone());
-                                shared_lock_future = shared.lock();
                                 Poll::Pending
                             }
                         }
-                        Poll::Pending => Poll::Pending,
                     })
                     .await
                 }
@@ -349,7 +320,7 @@ where
                     incoming_packet = self.incoming.next() => {
                         WakeReason::IncomingPacket(incoming_packet.ok_or(Error::Disconnected)?)
                     },
-                    shared = { send_available } => WakeReason::SendAvailable(shared),
+                    _ = { send_available } => WakeReason::SendAvailable,
                 }
             };
 
@@ -357,23 +328,21 @@ where
 
             match wake_reason {
                 WakeReason::ResendTimer => {
-                    let mut shared = shared.lock().await;
-                    self.resend(&mut *shared).await?;
+                    self.resend().await?;
                     self.resend_timer
                         .set(self.runtime.sleep(self.settings.resend_time).fuse());
                 }
                 WakeReason::IncomingPacket(packet) => {
-                    let mut shared = shared.lock().await;
-                    self.recv_packet(&mut *shared, packet).await?;
+                    self.recv_packet(packet).await?;
                 }
-                WakeReason::SendAvailable(mut shared) => {
+                WakeReason::SendAvailable => {
                     // We should use available bandwidth for resends before sending, to avoid
                     // starving resends
-                    self.resend(&mut *shared).await?;
+                    self.resend().await?;
                     self.resend_timer
                         .set(self.runtime.sleep(self.settings.resend_time).fuse());
 
-                    self.send(&mut *shared).await?;
+                    self.send().await?;
                 }
             }
 
@@ -389,12 +358,12 @@ where
     }
 
     // Send any data available to send, if we have the bandwidth for it
-    async fn send(&mut self, shared: &mut Shared) -> Result<(), Error> {
+    async fn send(&mut self) -> Result<(), Error> {
         if !self.bandwidth_limiter.bytes_available() {
             return Ok(());
         }
 
-        let send_amt = (shared.send_window.send_available())
+        let send_amt = (self.send_window.send_available())
             .min(self.remote_recv_available)
             .min(i16::MAX as u32);
 
@@ -407,7 +376,7 @@ where
 
         packet.resize(6 + send_amt as usize, 0);
 
-        let (start, end) = shared.send_window.send(&mut packet[6..]).unwrap();
+        let (start, end) = self.send_window.send(&mut packet[6..]).unwrap();
         assert_eq!((end - start).0, send_amt);
 
         LittleEndian::write_i16(&mut packet[0..2], send_amt as i16);
@@ -437,7 +406,7 @@ where
     }
 
     // Resend any data whose retransmit time has been reached, if we have the bandwidth for it
-    async fn resend(&mut self, shared: &mut Shared) -> Result<(), Error> {
+    async fn resend(&mut self) -> Result<(), Error> {
         for unacked in self.unacked_ranges.values_mut() {
             if !self.bandwidth_limiter.bytes_available() {
                 break;
@@ -461,8 +430,7 @@ where
                 LittleEndian::write_i16(&mut packet[0..2], len as i16);
                 LittleEndian::write_u32(&mut packet[2..6], unacked.start.0);
 
-                shared
-                    .send_window
+                self.send_window
                     .get_unacked(unacked.start, &mut packet[6..]);
 
                 self.bandwidth_limiter.take_bytes(packet.len() as u32);
@@ -482,7 +450,7 @@ where
 
     // Receive the given packet and respond with an acknowledgment packet, ignoring bandwidth
     // limits.
-    async fn recv_packet(&mut self, shared: &mut Shared, packet: P::Packet) -> Result<(), Error> {
+    async fn recv_packet(&mut self, packet: P::Packet) -> Result<(), Error> {
         if packet.len() < 2 {
             return Err(Error::ProtocolError);
         }
@@ -497,20 +465,20 @@ where
             let end_pos = start_pos + Wrapping(-data_len as u32);
             let recv_window_end = Wrapping(LittleEndian::read_u32(&packet[6..10]));
 
-            if stream_gt(recv_window_end, shared.send_window.send_pos()) {
+            if stream_gt(recv_window_end, self.send_window.send_pos()) {
                 let old_remote_recv_available = self.remote_recv_available;
                 self.remote_recv_available = self
                     .remote_recv_available
-                    .max((recv_window_end - shared.send_window.send_pos()).0);
+                    .max((recv_window_end - self.send_window.send_pos()).0);
 
                 if self.remote_recv_available != 0 && old_remote_recv_available == 0 {
                     // If we now believe the remote is newly ready to receive data, go ahead and
                     // send it.
-                    self.send(shared).await?;
+                    self.send().await?;
                 }
             }
 
-            let acked_range = match shared.send_window.ack_range(start_pos, end_pos) {
+            let acked_range = match self.send_window.ack_range(start_pos, end_pos) {
                 AckResult::NotFound => None,
                 AckResult::InvalidRange => {
                     return Err(Error::ProtocolError);
@@ -553,10 +521,8 @@ where
                     }
                 }
 
-                if shared.send_window_writer.write_available() > 0 {
-                    if let Some(write_ready) = shared.write_ready.take() {
-                        write_ready.wake();
-                    }
+                if self.send_window.write_available() > 0 {
+                    self.shared.write_ready.wake();
                 }
             }
         } else {
@@ -569,13 +535,13 @@ where
                 return Err(Error::ProtocolError);
             }
 
-            if let Some(end_pos) = shared.recv_window.recv(start_pos, &packet[6..]) {
+            if let Some(end_pos) = self.recv_window.recv(start_pos, &packet[6..]) {
                 let mut ack_packet = self.packet_pool.acquire();
                 ack_packet.resize(10, 0);
                 let ack_len = (end_pos - start_pos).0 as i16;
                 LittleEndian::write_i16(&mut ack_packet[0..2], -ack_len);
                 LittleEndian::write_u32(&mut ack_packet[2..6], start_pos.0);
-                LittleEndian::write_u32(&mut ack_packet[6..10], shared.recv_window.window_end().0);
+                LittleEndian::write_u32(&mut ack_packet[6..10], self.recv_window.window_end().0);
 
                 // We currently do not count acknowledgement packets against the outgoing bandwidth
                 // at all.
@@ -586,10 +552,8 @@ where
                     .start_send(ack_packet)
                     .map_err(|_| Error::Disconnected)?;
 
-                if shared.recv_window_reader.read_available() > 0 {
-                    if let Some(read_ready) = shared.read_ready.take() {
-                        read_ready.wake();
-                    }
+                if self.recv_window.read_available() > 0 {
+                    self.shared.read_ready.wake();
                 }
             }
         }
