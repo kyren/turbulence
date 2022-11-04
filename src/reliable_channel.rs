@@ -23,7 +23,9 @@ use crate::{
     bandwidth_limiter::BandwidthLimiter,
     packet::{Packet, PacketPool},
     runtime::Runtime,
-    windows::{stream_gt, AckResult, RecvWindow, SendWindow, StreamPos},
+    windows::{
+        stream_gt, AckResult, RecvWindow, RecvWindowReader, SendWindow, SendWindowWriter, StreamPos,
+    },
 };
 
 /// All reliable channel errors are fatal. Once any error is returned all further reliable channel
@@ -104,11 +106,18 @@ impl ReliableChannel {
 
         let resend_timer = Box::pin(runtime.sleep(settings.resend_time).fuse());
 
+        let (send_window, send_window_writer) =
+            SendWindow::new(settings.send_window_size, Wrapping(0));
+        let (recv_window, recv_window_reader) =
+            RecvWindow::new(settings.recv_window_size, Wrapping(0));
+
         let shared = Arc::new(Mutex::new(Shared {
-            send_window: SendWindow::new(settings.send_window_size, Wrapping(0)),
+            send_window,
+            send_window_writer,
             send_ready: None,
             write_ready: None,
-            recv_window: RecvWindow::new(settings.recv_window_size, Wrapping(0)),
+            recv_window,
+            recv_window_reader,
             read_ready: None,
         }));
 
@@ -164,7 +173,7 @@ impl ReliableChannel {
         let mut write_done =
             future::poll_fn(|cx| match Pin::new(&mut shared_lock_future).poll(cx) {
                 Poll::Ready(mut shared_guard) => {
-                    let len = shared_guard.send_window.write(data);
+                    let len = shared_guard.send_window_writer.write(data);
                     if len > 0 {
                         Poll::Ready(len)
                     } else {
@@ -182,7 +191,7 @@ impl ReliableChannel {
 
         select_biased! {
             error = &mut self.task => Err(error),
-            len = write_done => Ok(len),
+            len = write_done => Ok(len as usize),
         }
     }
 
@@ -222,7 +231,7 @@ impl ReliableChannel {
         let mut read_done =
             future::poll_fn(|cx| match Pin::new(&mut shared_lock_future).poll(cx) {
                 Poll::Ready(mut shared_guard) => {
-                    let len = shared_guard.recv_window.read(data);
+                    let len = shared_guard.recv_window_reader.read(data);
                     if len > 0 {
                         Poll::Ready(len)
                     } else {
@@ -237,17 +246,19 @@ impl ReliableChannel {
 
         select_biased! {
             error = &mut self.task => Err(error),
-            len = read_done => Ok(len),
+            len = read_done => Ok(len as usize),
         }
     }
 }
 
 struct Shared {
     send_window: SendWindow,
+    send_window_writer: SendWindowWriter,
     send_ready: Option<Waker>,
     write_ready: Option<Waker>,
 
     recv_window: RecvWindow,
+    recv_window_reader: RecvWindowReader,
     read_ready: Option<Waker>,
 }
 
@@ -542,7 +553,7 @@ where
                     }
                 }
 
-                if shared.send_window.write_available() > 0 {
+                if shared.send_window_writer.write_available() > 0 {
                     if let Some(write_ready) = shared.write_ready.take() {
                         write_ready.wake();
                     }
@@ -575,7 +586,7 @@ where
                     .start_send(ack_packet)
                     .map_err(|_| Error::Disconnected)?;
 
-                if shared.recv_window.read_available() > 0 {
+                if shared.recv_window_reader.read_available() > 0 {
                     if let Some(read_ready) = shared.read_ready.take() {
                         read_ready.wake();
                     }

@@ -48,7 +48,7 @@ impl Drop for RingBuffer {
 unsafe impl Send for RingBuffer {}
 unsafe impl Sync for RingBuffer {}
 
-pub fn ring_buffer(capacity: usize) -> (Writer, Reader) {
+pub fn create(capacity: usize) -> (Writer, Reader) {
     let buffer = Arc::new(RingBuffer::new(capacity));
     let writer = Writer(buffer.clone());
     let reader = Reader(buffer);
@@ -65,7 +65,7 @@ impl Writer {
         head_to_tail(self.0.capacity, head, tail)
     }
 
-    pub fn write(&mut self, mut data: &[u8]) -> usize {
+    pub fn write(&mut self, mut offset: usize, mut data: &[u8]) -> usize {
         let head_pos = self.0.head.load(Ordering::Acquire);
         let tail_pos = self.0.tail.load(Ordering::Acquire);
 
@@ -76,7 +76,7 @@ impl Writer {
             return 0;
         }
 
-        let (left, right): (&mut [MaybeUninit<u8>], &mut [MaybeUninit<u8>]) = unsafe {
+        let (mut left, mut right): (&mut [MaybeUninit<u8>], &mut [MaybeUninit<u8>]) = unsafe {
             if head < tail {
                 (
                     slice::from_raw_parts_mut(self.0.buffer.as_ptr().add(head), tail - head),
@@ -93,20 +93,32 @@ impl Writer {
             }
         };
 
+        let left_eat = left.len().min(offset);
+        left = &mut left[left_eat..];
+        offset -= left_eat;
+
         let left_len = left.len().min(data.len());
         write_slice(&mut left[0..left_len], &data[0..left_len]);
         data = &data[left_len..];
 
+        let right_eat = right.len().min(offset);
+        right = &mut right[right_eat..];
+
         let right_len = right.len().min(data.len());
         write_slice(&mut right[0..right_len], &data[0..right_len]);
 
-        let written = left_len + right_len;
-        self.0.head.store(
-            increment(self.0.capacity, head_pos, written),
-            Ordering::Release,
-        );
+        left_len + right_len
+    }
 
-        written
+    pub fn advance(&mut self, offset: usize) -> usize {
+        let head = self.0.head.load(Ordering::Acquire);
+        let tail = self.0.tail.load(Ordering::Acquire);
+
+        let offset = offset.min(head_to_tail(self.0.capacity, head, tail));
+        let head = increment(self.0.capacity, head, offset);
+        self.0.head.store(head, Ordering::Release);
+
+        offset
     }
 }
 
@@ -120,7 +132,7 @@ impl Reader {
         tail_to_head(self.0.capacity, tail, head)
     }
 
-    pub fn peek(&self, mut offset: usize, mut data: &mut [u8]) -> usize {
+    pub fn read(&self, mut offset: usize, mut data: &mut [u8]) -> usize {
         let head_pos = self.0.head.load(Ordering::Acquire);
         let tail_pos = self.0.tail.load(Ordering::Acquire);
 
@@ -217,63 +229,71 @@ fn write_slice(dst: &mut [MaybeUninit<u8>], src: &[u8]) {
 
 #[cfg(test)]
 mod tests {
-    use std::{thread, time::Duration};
+    use std::thread;
 
     use super::*;
 
     #[test]
     fn basic_read_write() {
-        let (mut writer, mut reader) = ring_buffer(7);
+        let (mut writer, mut reader) = create(7);
         let mut buffer = [0; 7];
 
         assert_eq!(writer.available(), 7);
-        assert_eq!(writer.write(&[0, 1, 2]), 3);
+        assert_eq!(writer.write(0, &[0, 1, 2]), 3);
+        assert_eq!(writer.advance(3), 3);
         assert_eq!(writer.available(), 4);
         assert_eq!(reader.available(), 3);
-        assert_eq!(reader.peek(0, &mut buffer), 3);
+        assert_eq!(reader.read(0, &mut buffer), 3);
         assert_eq!(buffer[0..3], [0, 1, 2]);
         assert_eq!(writer.available(), 4);
         assert_eq!(reader.advance(3), 3);
         assert_eq!(writer.available(), 7);
         assert_eq!(reader.available(), 0);
-        assert_eq!(writer.write(&[0, 1, 2]), 3);
+        assert_eq!(writer.write(0, &[0, 1, 2]), 3);
+        assert_eq!(writer.advance(3), 3);
         assert_eq!(writer.available(), 4);
-        assert_eq!(reader.peek(0, &mut buffer[0..3]), 3);
+        assert_eq!(reader.read(0, &mut buffer[0..3]), 3);
         assert_eq!(buffer[0..3], [0, 1, 2]);
-        assert_eq!(writer.write(&[3, 4, 5]), 3);
+        assert_eq!(writer.write(0, &[3, 4, 5]), 3);
+        assert_eq!(writer.advance(3), 3);
         assert_eq!(writer.available(), 1);
-        assert_eq!(writer.write(&[6, 7, 8, 9]), 1);
+        assert_eq!(writer.write(0, &[6, 7, 8, 9]), 1);
+        assert_eq!(writer.advance(1), 1);
         assert_eq!(writer.available(), 0);
         assert_eq!(reader.available(), 7);
-        assert_eq!(reader.peek(4, &mut buffer[0..5]), 3);
+        assert_eq!(reader.read(4, &mut buffer[0..5]), 3);
         assert_eq!(buffer[0..3], [4, 5, 6]);
-        assert_eq!(reader.peek(0, &mut buffer[0..2]), 2);
+        assert_eq!(reader.read(0, &mut buffer[0..2]), 2);
         assert_eq!(buffer[0..2], [0, 1]);
         assert_eq!(reader.advance(2), 2);
         assert_eq!(reader.available(), 5);
         assert_eq!(writer.available(), 2);
-        assert_eq!(reader.peek(0, &mut buffer[0..3]), 3);
+        assert_eq!(reader.read(0, &mut buffer[0..3]), 3);
         assert_eq!(buffer[0..3], [2, 3, 4]);
         assert_eq!(reader.advance(3), 3);
         assert_eq!(reader.available(), 2);
         assert_eq!(writer.available(), 5);
-        assert_eq!(reader.peek(0, &mut buffer[0..5]), 2);
+        assert_eq!(reader.read(0, &mut buffer[0..5]), 2);
         assert_eq!(buffer[0..2], [5, 6]);
         assert_eq!(reader.available(), 2);
         assert_eq!(writer.available(), 5);
         assert_eq!(reader.advance(5), 2);
         assert_eq!(reader.available(), 0);
         assert_eq!(writer.available(), 7);
-        assert_eq!(writer.write(&[0, 1, 2, 3, 4]), 5);
+        assert_eq!(writer.write(3, &[13, 14]), 2);
+        assert_eq!(writer.write(0, &[10, 11, 12]), 3);
+        assert_eq!(writer.advance(5), 5);
         assert_eq!(writer.available(), 2);
         assert_eq!(reader.available(), 5);
-        assert_eq!(reader.peek(2, &mut buffer[0..5]), 3);
-        assert_eq!(buffer[0..3], [2, 3, 4]);
+        assert_eq!(reader.read(2, &mut buffer[0..5]), 3);
+        assert_eq!(buffer[0..3], [12, 13, 14]);
+        assert_eq!(reader.read(0, &mut buffer[0..3]), 3);
+        assert_eq!(buffer[0..3], [10, 11, 12]);
     }
 
     #[test]
     fn threaded_read_write() {
-        let (mut writer, mut reader) = ring_buffer(64);
+        let (mut writer, mut reader) = create(64);
 
         let a = thread::spawn(move || {
             let mut b = [0; 32];
@@ -283,7 +303,9 @@ mod tests {
                 for j in 0..write {
                     b[j] = ((i + j) % 256) as u8;
                 }
-                i += writer.write(&b[0..write]);
+                let len = writer.write(0, &b[0..write]);
+                writer.advance(len);
+                i += len;
                 if i >= 10_000 {
                     break;
                 }
@@ -294,7 +316,7 @@ mod tests {
             let mut b = [0; 32];
             let mut i = 0;
             loop {
-                let r = reader.peek(0, &mut b);
+                let r = reader.read(0, &mut b);
                 for j in 0..r {
                     assert_eq!(b[j], ((i + j) % 256) as u8);
                 }

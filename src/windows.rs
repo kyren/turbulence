@@ -1,4 +1,6 @@
-use std::{cmp::Ordering, collections::VecDeque, num::Wrapping, u32};
+use std::{cmp::Ordering, num::Wrapping, u32};
+
+use crate::ring_buffer;
 
 pub type StreamPos = Wrapping<u32>;
 
@@ -61,14 +63,29 @@ pub enum AckResult {
     PartialAck(StreamPos),
 }
 
+pub struct SendWindowWriter {
+    buffer: ring_buffer::Writer,
+}
+
+impl SendWindowWriter {
+    /// The amount of data available to be written
+    pub fn write_available(&self) -> u32 {
+        self.buffer.available() as u32
+    }
+
+    /// Write the given data to the end of the send buffer, up to the available amount to be
+    /// written.
+    pub fn write(&mut self, data: &[u8]) -> u32 {
+        let len = self.buffer.write(0, data);
+        self.buffer.advance(len);
+        len as u32
+    }
+}
+
 /// Coaelesces and buffers outgoing stream data up to a configured window capacity and keeps it
 /// available to resend until it is acknowledged from the remote.
 pub struct SendWindow {
-    // The capacity here is hard-coded for testability. We could use `buffer.capacity()`
-    // here instead, but tests assume that the capacity is the requested capacity, and
-    // `VecDeque::with_capacity` only guarantees a minimum capacity.
-    capacity: u32,
-    buffer: VecDeque<u8>,
+    buffer: ring_buffer::Reader,
     // The stream position of the first byte of the outgoing buffer after the "sent" bytes.
     send_pos: StreamPos,
     // The number of bytes at the beginning of the outgoing buffer that have already been sent, but
@@ -81,30 +98,20 @@ pub struct SendWindow {
 }
 
 impl SendWindow {
-    pub fn new(capacity: u32, stream_start: StreamPos) -> SendWindow {
+    pub fn new(capacity: u32, stream_start: StreamPos) -> (SendWindow, SendWindowWriter) {
         // Any more than this and the unacked list might not be totally ordered.
         assert!(capacity <= u32::MAX / 2);
 
-        SendWindow {
-            capacity,
-            buffer: VecDeque::with_capacity(capacity as usize),
-            send_pos: stream_start,
-            sent: 0,
-            unacked_ranges: Vec::new(),
-        }
-    }
-
-    /// The amount of data available to be written
-    pub fn write_available(&self) -> u32 {
-        self.capacity - self.buffer.len() as u32
-    }
-
-    /// Write the given data to the end of the send buffer, up to the available amount to be
-    /// written.
-    pub fn write(&mut self, data: &[u8]) -> usize {
-        let amt = (self.capacity as usize - self.buffer.len()).min(data.len());
-        self.buffer.extend(&data[0..amt]);
-        amt
+        let (writer, reader) = ring_buffer::create(capacity as usize);
+        (
+            SendWindow {
+                buffer: reader,
+                send_pos: stream_start,
+                sent: 0,
+                unacked_ranges: Vec::new(),
+            },
+            SendWindowWriter { buffer: writer },
+        )
     }
 
     /// The stream position of the next byte of data that would be sent with a call to
@@ -114,7 +121,7 @@ impl SendWindow {
     }
 
     pub fn send_available(&self) -> u32 {
-        self.buffer.len() as u32 - self.sent
+        self.buffer.available() as u32 - self.sent
     }
 
     /// Send any pending written data up to the size of the provided buffer, and add this sent range
@@ -125,13 +132,15 @@ impl SendWindow {
     /// range is actually written. Will not return a zero sized range, if no data is available to be
     /// sent or the provided buffer is empty, will return None.
     pub fn send(&mut self, data: &mut [u8]) -> Option<(StreamPos, StreamPos)> {
-        let send_amt = (self.buffer.len() - self.sent as usize).min(data.len()) as u32;
+        let send_amt = (self.buffer.available() - self.sent as usize).min(data.len()) as u32;
         if send_amt == 0 {
             None
         } else {
-            for i in 0..send_amt as usize {
-                data[i] = self.buffer[i + self.sent as usize];
-            }
+            assert_eq!(
+                self.buffer
+                    .read(self.sent as usize, &mut data[0..send_amt as usize]),
+                send_amt as usize,
+            );
             let start = self.send_pos;
             let end = start + Wrapping(send_amt);
 
@@ -155,9 +164,7 @@ impl SendWindow {
     pub fn get_unacked(&self, start: StreamPos, data: &mut [u8]) {
         let unacked_start = self.unacked_start();
         let buf_start = (start - unacked_start).0 as usize;
-        for i in 0..data.len() {
-            data[i] = self.buffer[buf_start + i];
-        }
+        assert_eq!(self.buffer.read(buf_start as usize, data), data.len());
     }
 
     /// Acknowledge the receipt of the given stream range from the remote, and thus potentially free
@@ -182,11 +189,11 @@ impl SendWindow {
                         if start == unacked_start {
                             assert_eq!(i, 0);
                             if self.unacked_ranges.is_empty() {
-                                self.buffer.drain(0..self.sent as usize);
+                                self.buffer.advance(self.sent as usize);
                                 self.sent = 0;
                             } else {
                                 let acked_amt = (self.unacked_ranges[0].0 - start).0;
-                                self.buffer.drain(0..acked_amt as usize);
+                                self.buffer.advance(acked_amt as usize);
                                 self.sent -= acked_amt;
                             }
                         }
@@ -195,7 +202,7 @@ impl SendWindow {
                         if start == unacked_start {
                             assert_eq!(i, 0);
                             let acked_amt = (end - start).0;
-                            self.buffer.drain(0..acked_amt as usize);
+                            self.buffer.advance(acked_amt as usize);
                             self.sent -= acked_amt;
                         }
 
@@ -209,18 +216,31 @@ impl SendWindow {
     }
 }
 
+pub struct RecvWindowReader {
+    buffer: ring_buffer::Reader,
+}
+
+impl RecvWindowReader {
+    /// The amount of contiguous data available to be read
+    pub fn read_available(&self) -> u32 {
+        self.buffer.available() as u32
+    }
+
+    /// Read any ready data off of the beginning of the read buffer and return the number of bytes
+    /// read.
+    pub fn read(&mut self, data: &mut [u8]) -> u32 {
+        let len = self.buffer.read(0, data);
+        self.buffer.advance(len);
+        len as u32
+    }
+}
+
 /// Receives stream data up to a configured window capacity, in any order, and combines it into an
 /// ordered stream.
 pub struct RecvWindow {
-    // The capacity here is hard-coded for testability. We could use `buffer.capacity()`
-    // here instead, but tests assume that the capacity is the requested capacity, and
-    // `VecDeque::with_capacity` only guarantees a minimum capacity.
-    capacity: u32,
+    buffer: ring_buffer::Writer,
     // The current stream position of the first byte of the incoming buffer after the "ready" bytes.
     recv_pos: StreamPos,
-    // The number of bytes in the input buffer which are available for reading
-    ready: u32,
-    buffer: VecDeque<u8>,
     // An ordered list (in wrap-around stream positions) of non-contiguous received regions of data
     // in the buffer that do not connect with the "ready" data. This is used to receive out-of-
     // ordered data and allow it to be recombined into an in-order stream.
@@ -236,38 +256,25 @@ pub struct RecvWindow {
 }
 
 impl RecvWindow {
-    pub fn new(capacity: u32, stream_start: StreamPos) -> RecvWindow {
+    pub fn new(capacity: u32, stream_start: StreamPos) -> (RecvWindow, RecvWindowReader) {
         // Any more than this and the unready list might not be totally ordered.
         assert!(capacity <= u32::MAX / 2);
-        RecvWindow {
-            capacity,
-            recv_pos: stream_start,
-            ready: 0,
-            buffer: VecDeque::with_capacity(capacity as usize),
-            unready: Vec::new(),
-        }
-    }
 
-    /// The amount of contiguous data available to be read
-    pub fn read_available(&self) -> u32 {
-        self.ready
-    }
-
-    /// Read any ready data off of the beginning of the read buffer and return the number of bytes
-    /// read.
-    pub fn read(&mut self, data: &mut [u8]) -> usize {
-        let read_amt = data.len().min(self.ready as usize);
-        for i in 0..read_amt {
-            data[i] = self.buffer.pop_front().unwrap();
-        }
-        self.ready -= read_amt as u32;
-        read_amt
+        let (writer, reader) = ring_buffer::create(capacity as usize);
+        (
+            RecvWindow {
+                buffer: writer,
+                recv_pos: stream_start,
+                unready: Vec::new(),
+            },
+            RecvWindowReader { buffer: reader },
+        )
     }
 
     /// The stream position where no more data could be received. This window will move forward as
     /// data is read.
     pub fn window_end(&self) -> StreamPos {
-        self.recv_pos + Wrapping(self.capacity - self.ready)
+        self.recv_pos + Wrapping(self.buffer.available() as u32)
     }
 
     /// Receive a new block of data and return the upper bound of the stream range that was
@@ -290,12 +297,9 @@ impl RecvWindow {
     pub fn recv(&mut self, start_pos: StreamPos, data: &[u8]) -> Option<StreamPos> {
         assert!(data.len() <= u32::MAX as usize / 2);
 
-        // This is the stream position at the beginning of the read buffer
-        let recv_start_pos = self.recv_pos - Wrapping(self.ready);
-
         // `recv_end_pos` is the stream position at the end of the maximum capacity of the receive
         // buffer.
-        let recv_end_pos = self.recv_pos + Wrapping(self.capacity as u32 - self.ready);
+        let recv_end_pos = self.recv_pos + Wrapping(self.buffer.available() as u32);
 
         // `end_pos` is the stream position at the end of the input data
         let end_pos = start_pos + Wrapping(data.len() as u32);
@@ -337,18 +341,20 @@ impl RecvWindow {
             }
         }
 
-        // The index in the destination buffer where we start copying from
+        // The index in the source buffer where we start copying from
         let data_start = (copy_start_pos - start_pos).0 as usize;
         // The index in the receive buffer where we start copying to
-        let buf_start = (copy_start_pos - recv_start_pos).0 as usize;
+        let buf_start = (copy_start_pos - self.recv_pos).0 as usize;
         // The index in the receive buffer where we stop copying
-        let buf_end = (end_pos - recv_start_pos).0 as usize;
+        let buf_end = (end_pos - self.recv_pos).0 as usize;
 
-        assert!(buf_end <= self.capacity as usize);
-        self.buffer.resize(self.buffer.len().max(buf_end), 0);
-        for i in buf_start..buf_end {
-            self.buffer[i] = data[i - buf_start + data_start];
-        }
+        assert_eq!(
+            self.buffer.write(
+                buf_start,
+                &data[data_start..data_start + buf_end - buf_start],
+            ),
+            buf_end - buf_start
+        );
 
         // Very, very carefully, combine this newly received region with the existing unready
         // regions and maintain all the invariants of the unready list.
@@ -377,7 +383,7 @@ impl RecvWindow {
                 end_pos
             };
 
-            self.ready += (end - self.recv_pos).0;
+            self.buffer.advance((end - self.recv_pos).0 as usize);
             self.recv_pos = end;
         } else {
             // If this received region does not touch the end of the ready block, we just need to
@@ -431,14 +437,14 @@ mod tests {
         let stream_start = Wrapping(u32::MAX - 11);
         let write_data = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
         let mut send_data = [0; 16];
-        let mut send_window = SendWindow::new(7, stream_start);
+        let (mut send_window, mut send_window_writer) = SendWindow::new(7, stream_start);
 
-        assert_eq!(send_window.write_available(), 7);
+        assert_eq!(send_window_writer.write_available(), 7);
         assert_eq!(send_window.send_pos(), stream_start);
 
-        assert_eq!(send_window.write(&write_data[0..4]), 4);
-        assert_eq!(send_window.write(&write_data[4..6]), 2);
-        assert_eq!(send_window.write(&write_data[6..10]), 1);
+        assert_eq!(send_window_writer.write(&write_data[0..4]), 4);
+        assert_eq!(send_window_writer.write(&write_data[4..6]), 2);
+        assert_eq!(send_window_writer.write(&write_data[6..10]), 1);
 
         assert_eq!(send_window.send_pos(), stream_start);
 
@@ -452,23 +458,23 @@ mod tests {
         }
         assert_eq!(send_window.send_pos(), stream_start + Wrapping(6));
 
-        assert_eq!(send_window.write_available(), 0);
+        assert_eq!(send_window_writer.write_available(), 0);
 
         assert_eq!(
             send_window.ack_range(stream_start, stream_start + Wrapping(4)),
             AckResult::PartialAck(stream_start + Wrapping(6))
         );
 
-        assert_eq!(send_window.write_available(), 4);
-        assert_eq!(send_window.write(&write_data[7..16]), 4);
+        assert_eq!(send_window_writer.write_available(), 4);
+        assert_eq!(send_window_writer.write(&write_data[7..16]), 4);
 
         assert_eq!(
             send_window.ack_range(stream_start + Wrapping(4), stream_start + Wrapping(6)),
             AckResult::Ack
         );
 
-        assert_eq!(send_window.write_available(), 2);
-        assert_eq!(send_window.write(&write_data[11..16]), 2);
+        assert_eq!(send_window_writer.write_available(), 2);
+        assert_eq!(send_window_writer.write(&write_data[11..16]), 2);
 
         assert_eq!(send_window.send_available(), 7);
         assert_eq!(
@@ -519,9 +525,9 @@ mod tests {
             AckResult::Ack
         );
 
-        assert_eq!(send_window.write_available(), 3);
+        assert_eq!(send_window_writer.write_available(), 3);
         assert_eq!(send_window.send_pos(), stream_start + Wrapping(13));
-        assert_eq!(send_window.write(&write_data[14..16]), 2);
+        assert_eq!(send_window_writer.write(&write_data[14..16]), 2);
 
         assert_eq!(
             send_window.ack_range(stream_start + Wrapping(12), stream_start + Wrapping(13)),
@@ -532,7 +538,7 @@ mod tests {
             AckResult::Ack
         );
 
-        assert_eq!(send_window.write_available(), 5);
+        assert_eq!(send_window_writer.write_available(), 5);
 
         assert_eq!(send_window.send_available(), 2);
         assert_eq!(
@@ -552,7 +558,7 @@ mod tests {
             AckResult::Ack,
         );
 
-        assert_eq!(send_window.write_available(), 7);
+        assert_eq!(send_window_writer.write_available(), 7);
     }
 
     #[test]
@@ -563,7 +569,7 @@ mod tests {
             24, 25, 26, 27, 28, 29, 30, 31,
         ];
         let mut read_data = [0; 32];
-        let mut recv_window = RecvWindow::new(7, stream_start);
+        let (mut recv_window, mut recv_window_reader) = RecvWindow::new(7, stream_start);
 
         assert_eq!(recv_window.window_end(), stream_start + Wrapping(7));
         assert_eq!(
@@ -577,8 +583,8 @@ mod tests {
         );
         assert_eq!(recv_window.window_end(), stream_start + Wrapping(7));
 
-        assert_eq!(recv_window.read(&mut read_data[0..3]), 3);
-        assert_eq!(recv_window.read(&mut read_data[3..5]), 2);
+        assert_eq!(recv_window_reader.read(&mut read_data[0..3]), 3);
+        assert_eq!(recv_window_reader.read(&mut read_data[3..5]), 2);
         for i in 0..5 {
             assert_eq!(read_data[i], i as u8);
         }
@@ -593,9 +599,9 @@ mod tests {
             Some(stream_start + Wrapping(12))
         );
         assert_eq!(recv_window.window_end(), stream_start + Wrapping(12));
-        assert_eq!(recv_window.read_available(), 7);
+        assert_eq!(recv_window_reader.read_available(), 7);
 
-        assert_eq!(recv_window.read(&mut read_data[5..10]), 5);
+        assert_eq!(recv_window_reader.read(&mut read_data[5..10]), 5);
         for i in 5..10 {
             assert_eq!(read_data[i], i as u8);
         }
@@ -611,7 +617,7 @@ mod tests {
         );
         assert_eq!(recv_window.window_end(), stream_start + Wrapping(17));
 
-        assert_eq!(recv_window.read(&mut read_data[10..20]), 2);
+        assert_eq!(recv_window_reader.read(&mut read_data[10..20]), 2);
         for i in 10..12 {
             assert_eq!(read_data[i], i as u8);
         }
@@ -650,7 +656,7 @@ mod tests {
             None,
         );
 
-        assert_eq!(recv_window.read(&mut read_data[12..25]), 7);
+        assert_eq!(recv_window_reader.read(&mut read_data[12..25]), 7);
         for i in 12..19 {
             assert_eq!(read_data[i], i as u8);
         }
@@ -666,7 +672,7 @@ mod tests {
             Some(stream_start + Wrapping(24))
         );
 
-        assert_eq!(recv_window.read(&mut read_data[19..25]), 6);
+        assert_eq!(recv_window_reader.read(&mut read_data[19..25]), 6);
         for i in 19..25 {
             assert_eq!(read_data[i], i as u8);
         }
@@ -676,50 +682,50 @@ mod tests {
             recv_window.recv(stream_start + Wrapping(26), &recv_data[26..27]),
             Some(stream_start + Wrapping(27))
         );
-        assert_eq!(recv_window.read(&mut read_data[25..32]), 0);
+        assert_eq!(recv_window_reader.read(&mut read_data[25..32]), 0);
 
         assert_eq!(recv_window.window_end(), stream_start + Wrapping(32));
         assert_eq!(
             recv_window.recv(stream_start + Wrapping(28), &recv_data[28..29]),
             Some(stream_start + Wrapping(29))
         );
-        assert_eq!(recv_window.read(&mut read_data[25..32]), 0);
+        assert_eq!(recv_window_reader.read(&mut read_data[25..32]), 0);
 
         assert_eq!(recv_window.window_end(), stream_start + Wrapping(32));
         assert_eq!(
             recv_window.recv(stream_start + Wrapping(30), &recv_data[30..31]),
             Some(stream_start + Wrapping(31))
         );
-        assert_eq!(recv_window.read(&mut read_data[25..32]), 0);
+        assert_eq!(recv_window_reader.read(&mut read_data[25..32]), 0);
 
         assert_eq!(recv_window.window_end(), stream_start + Wrapping(32));
         assert_eq!(
             recv_window.recv(stream_start + Wrapping(29), &recv_data[29..30]),
             Some(stream_start + Wrapping(30))
         );
-        assert_eq!(recv_window.read(&mut read_data[25..32]), 0);
+        assert_eq!(recv_window_reader.read(&mut read_data[25..32]), 0);
 
         assert_eq!(recv_window.window_end(), stream_start + Wrapping(32));
         assert_eq!(
             recv_window.recv(stream_start + Wrapping(28), &recv_data[28..29]),
             Some(stream_start + Wrapping(29))
         );
-        assert_eq!(recv_window.read(&mut read_data[25..32]), 0);
+        assert_eq!(recv_window_reader.read(&mut read_data[25..32]), 0);
 
         assert_eq!(recv_window.window_end(), stream_start + Wrapping(32));
         assert_eq!(
             recv_window.recv(stream_start + Wrapping(27), &recv_data[27..28]),
             Some(stream_start + Wrapping(28))
         );
-        assert_eq!(recv_window.read(&mut read_data[25..32]), 0);
+        assert_eq!(recv_window_reader.read(&mut read_data[25..32]), 0);
 
         assert_eq!(recv_window.window_end(), stream_start + Wrapping(32));
         assert_eq!(
             recv_window.recv(stream_start + Wrapping(25), &recv_data[25..26]),
             Some(stream_start + Wrapping(26))
         );
-        assert_eq!(recv_window.read(&mut read_data[25..31]), 6);
-        for i in 26..31 {
+        assert_eq!(recv_window_reader.read(&mut read_data[25..31]), 6);
+        for i in 25..31 {
             assert_eq!(read_data[i], i as u8);
         }
 
