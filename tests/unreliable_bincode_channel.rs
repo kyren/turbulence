@@ -1,9 +1,10 @@
-use futures::channel::{mpsc, oneshot};
+use futures::channel::oneshot;
 use serde::{Deserialize, Serialize};
 
 use turbulence::{
     buffer::BufferPacketPool,
     runtime::Runtime,
+    spsc,
     unreliable_bincode_channel::{UnreliableBincodeChannel, UnreliableTypedChannel},
     unreliable_channel::{Settings, UnreliableChannel},
 };
@@ -22,8 +23,8 @@ fn test_unreliable_bincode_channel() {
     let mut runtime = SimpleRuntime::new();
     let packet_pool = BufferPacketPool::new(SimpleBufferPool(1200));
 
-    let (asend, arecv) = mpsc::channel(8);
-    let (bsend, brecv) = mpsc::channel(8);
+    let (asend, arecv) = spsc::channel(8);
+    let (bsend, brecv) = spsc::channel(8);
 
     let mut stream1 = UnreliableTypedChannel::new(UnreliableBincodeChannel::new(
         UnreliableChannel::new(

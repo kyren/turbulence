@@ -98,7 +98,7 @@ fn test_message_channels() {
             // somewhat complex. This is not a great example of how to do it.
             //
             // Calling `x_incoming.send(packet).await` here is using `IncomingMultiplexedPackets`
-            // `Sink` implementation, which forwards to the incoming mpsc channel for whatever
+            // `Sink` implementation, which forwards to the incoming spsc channel for whatever
             // channel this packet is for. `turbulence` *only* uses sync channels with static
             // size, so it is expected that this buffer might be full. You might want to instead
             // use `IncomingMultiplexedPackets::try_send` here and if the incoming buffer is full,

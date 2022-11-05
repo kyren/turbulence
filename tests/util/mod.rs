@@ -23,6 +23,7 @@ use turbulence::{
     packet::{Packet, PacketPool},
     packet_multiplexer::{MuxPacket, MuxPacketPool},
     runtime::Runtime,
+    spsc,
 };
 
 #[derive(Debug, Copy, Clone)]
@@ -186,12 +187,23 @@ pub fn condition_link<P>(
     runtime: impl Runtime + Clone + Send + 'static,
     mut pool: P,
     mut rng: impl Rng + Send + 'static,
-    mut incoming: mpsc::Receiver<P::Packet>,
-    outgoing: mpsc::Sender<P::Packet>,
+    mut incoming: spsc::Receiver<P::Packet>,
+    mut outgoing: spsc::Sender<P::Packet>,
 ) where
     P: PacketPool + Send + 'static,
     P::Packet: Send,
 {
+    // Hack to make implementing delayed packets easier
+    let (delay_outgoing, mut delay_incoming) = mpsc::unbounded();
+
+    runtime.spawn(async move {
+        while let Some(msg) = delay_incoming.next().await {
+            if outgoing.send(msg).await.is_err() {
+                break;
+            }
+        }
+    });
+
     runtime.spawn({
         let runtime = runtime.clone();
         async move {
@@ -202,7 +214,7 @@ pub fn condition_link<P>(
                             if rng.gen::<f64>() <= condition.duplicate {
                                 runtime.spawn({
                                     let runtime = runtime.clone();
-                                    let mut outgoing = outgoing.clone();
+                                    let mut outgoing = delay_outgoing.clone();
                                     let delay = Duration::from_secs_f64(
                                         condition.delay.as_secs_f64()
                                             + rng.gen::<f64>() * condition.jitter.as_secs_f64(),
@@ -218,7 +230,7 @@ pub fn condition_link<P>(
 
                             runtime.spawn({
                                 let runtime = runtime.clone();
-                                let mut outgoing = outgoing.clone();
+                                let mut outgoing = delay_outgoing.clone();
                                 let delay = Duration::from_secs_f64(
                                     condition.delay.as_secs_f64()
                                         + rng.gen::<f64>() * condition.jitter.as_secs_f64(),

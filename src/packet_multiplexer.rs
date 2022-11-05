@@ -11,15 +11,14 @@ use std::{
     u8,
 };
 
-use futures::{
-    channel::mpsc::{self, Receiver, Sender},
-    stream::SelectAll,
-    Sink, Stream,
-};
+use futures::{stream::SelectAll, Sink, Stream};
 use rustc_hash::{FxHashMap, FxHashSet};
 use thiserror::Error;
 
-use crate::packet::{Packet, PacketPool};
+use crate::{
+    packet::{Packet, PacketPool},
+    spsc,
+};
 
 pub type PacketChannel = u8;
 
@@ -129,7 +128,7 @@ pub struct PacketMultiplexer<P> {
 
 impl<P> PacketMultiplexer<P>
 where
-    P: Packet + Unpin,
+    P: Packet,
 {
     pub fn new() -> PacketMultiplexer<P> {
         PacketMultiplexer {
@@ -141,16 +140,16 @@ where
     /// Open a multiplexed packet channel, producing a sender for outgoing `MuxPacket`s on this
     /// channel, and a receiver for incoming `MuxPacket`s on this channel.
     ///
-    /// The `buffer_size` parameter controls the buffer size requested when creating the MPSC
-    /// futures channels for the returned `Sender` and `Receiver`.
+    /// The `buffer_size` parameter controls the buffer size requested when creating the spsc
+    /// channels for the returned `Sender` and `Receiver`.
     pub fn open_channel(
         &mut self,
         channel: PacketChannel,
         buffer_size: usize,
     ) -> Result<
         (
-            Sender<MuxPacket<P>>,
-            Receiver<MuxPacket<P>>,
+            spsc::Sender<MuxPacket<P>>,
+            spsc::Receiver<MuxPacket<P>>,
             ChannelStatistics,
         ),
         DuplicateChannel,
@@ -159,8 +158,8 @@ where
         match self.incoming.entry(channel) {
             hash_map::Entry::Occupied(_) => Err(DuplicateChannel),
             hash_map::Entry::Vacant(vacant) => {
-                let (incoming_sender, incoming_receiver) = mpsc::channel(buffer_size);
-                let (outgoing_sender, outgoing_receiver) = mpsc::channel(buffer_size);
+                let (incoming_sender, incoming_receiver) = spsc::channel(buffer_size);
+                let (outgoing_sender, outgoing_receiver) = spsc::channel(buffer_size);
                 vacant.insert(ChannelSender {
                     sender: incoming_sender,
                     statistics: Arc::clone(&statistics),
@@ -241,9 +240,11 @@ pub struct IncomingMultiplexedPackets<P> {
     to_flush: FxHashSet<PacketChannel>,
 }
 
+impl<P> Unpin for IncomingMultiplexedPackets<P> {}
+
 impl<P> IncomingMultiplexedPackets<P>
 where
-    P: Packet + Unpin,
+    P: Packet,
 {
     /// Attempt to send the given packet to the appropriate multiplexed channel without blocking.
     ///
@@ -272,7 +273,7 @@ where
 
 impl<P> Sink<P> for IncomingMultiplexedPackets<P>
 where
-    P: Packet + Unpin,
+    P: Packet,
 {
     type Error = IncomingError;
 
@@ -283,15 +284,15 @@ where
                 .incoming
                 .get_mut(&channel)
                 .ok_or(IncomingError::UnknownPacketChannel)?;
-            match incoming.sender.poll_ready(cx) {
+            let mut sender = Pin::new(&mut incoming.sender);
+            match sender.as_mut().poll_ready(cx) {
                 Poll::Pending => {
                     self.to_send = Some(packet);
                     Poll::Pending
                 }
                 Poll::Ready(Ok(())) => {
                     let mux_packet_len = (packet.len() - 1) as u64;
-                    incoming
-                        .sender
+                    sender
                         .start_send(MuxPacket(packet))
                         .map_err(|_| IncomingError::ChannelReceiverDropped)?;
                     incoming.statistics.mark_incoming_packet(mux_packet_len);
@@ -347,7 +348,7 @@ pub struct OutgoingMultiplexedPackets<P> {
 
 impl<P> Stream for OutgoingMultiplexedPackets<P>
 where
-    P: Packet + Unpin,
+    P: Packet,
 {
     type Item = P;
 
@@ -357,19 +358,21 @@ where
 }
 
 struct ChannelSender<P> {
-    sender: Sender<MuxPacket<P>>,
+    sender: spsc::Sender<MuxPacket<P>>,
     statistics: Arc<ChannelStatisticsData>,
 }
 
 struct ChannelReceiver<P> {
     channel: PacketChannel,
-    receiver: Receiver<MuxPacket<P>>,
+    receiver: spsc::Receiver<MuxPacket<P>>,
     statistics: Arc<ChannelStatisticsData>,
 }
 
+impl<P> Unpin for ChannelReceiver<P> {}
+
 impl<P> Stream for ChannelReceiver<P>
 where
-    P: Packet + Unpin,
+    P: Packet,
 {
     type Item = P;
 

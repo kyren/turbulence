@@ -1,17 +1,14 @@
-use std::{convert::TryInto, mem};
+use std::{convert::TryInto, mem, pin::Pin};
 
 use byteorder::{ByteOrder, LittleEndian};
-use futures::{
-    channel::mpsc::{Receiver, Sender},
-    future::poll_fn,
-    StreamExt,
-};
+use futures::{future::poll_fn, Sink, StreamExt};
 use thiserror::Error;
 
 use crate::{
     bandwidth_limiter::BandwidthLimiter,
     packet::{Packet, PacketPool, MAX_PACKET_LEN},
     runtime::Runtime,
+    spsc,
 };
 
 /// The maximum possible message length of an `UnreliableChannel` message for the largest possible
@@ -58,8 +55,8 @@ where
 {
     packet_pool: P,
     bandwidth_limiter: BandwidthLimiter<R>,
-    incoming_packets: Receiver<P::Packet>,
-    outgoing_packets: Sender<P::Packet>,
+    incoming_packets: spsc::Receiver<P::Packet>,
+    outgoing_packets: spsc::Sender<P::Packet>,
     out_packet: P::Packet,
     in_packet: Option<(P::Packet, usize)>,
 }
@@ -73,8 +70,8 @@ where
         runtime: R,
         mut packet_pool: P,
         settings: Settings,
-        incoming: Receiver<P::Packet>,
-        outgoing: Sender<P::Packet>,
+        incoming: spsc::Receiver<P::Packet>,
+        outgoing: spsc::Sender<P::Packet>,
     ) -> Self {
         let out_packet = packet_pool.acquire();
         UnreliableChannel {
@@ -133,13 +130,18 @@ where
             self.bandwidth_limiter.update_available();
             self.bandwidth_limiter.delay_until_available().await;
 
-            poll_fn(|cx| self.outgoing_packets.poll_ready(cx))
+            let mut outgoing_packets = Pin::new(&mut self.outgoing_packets);
+            poll_fn(|cx| outgoing_packets.as_mut().poll_ready(cx))
                 .await
                 .map_err(|_| Disconnected)?;
             let out_packet = mem::replace(&mut self.out_packet, self.packet_pool.acquire());
             self.bandwidth_limiter.take_bytes(out_packet.len() as u32);
-            self.outgoing_packets
+            outgoing_packets
+                .as_mut()
                 .start_send(out_packet)
+                .map_err(|_| Disconnected)?;
+            poll_fn(|cx| outgoing_packets.as_mut().poll_flush(cx))
+                .await
                 .map_err(|_| Disconnected)?;
         }
 

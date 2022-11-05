@@ -17,6 +17,7 @@ circle-ci = { repository = "kyren/turbulence", branch = "master" }
 bincode = "1.3"
 byteorder = "1.3"
 cache-padded = "1.2"
+crossbeam-channel = "0.5"
 futures = "0.3"
 rustc-hash = "1.0"
 serde = "1.0"

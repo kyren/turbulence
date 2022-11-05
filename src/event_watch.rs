@@ -6,10 +6,7 @@ use std::{
     task::Poll,
 };
 
-use futures::{
-    future::{self},
-    task::AtomicWaker,
-};
+use futures::{future, task::AtomicWaker};
 
 /// Creates a multi-producer single-consumer stream of events with certain beneficial properties.
 ///
@@ -54,11 +51,15 @@ pub struct Receiver(Arc<State>);
 impl Receiver {
     pub async fn wait(&mut self) {
         future::poll_fn(|cx| {
-            self.0.waker.register(cx.waker());
             if self.0.signaled.swap(false, atomic::Ordering::SeqCst) {
                 Poll::Ready(())
             } else {
-                Poll::Pending
+                self.0.waker.register(cx.waker());
+                if self.0.signaled.swap(false, atomic::Ordering::SeqCst) {
+                    Poll::Ready(())
+                } else {
+                    Poll::Pending
+                }
             }
         })
         .await

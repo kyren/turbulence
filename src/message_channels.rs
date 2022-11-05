@@ -5,11 +5,10 @@ use std::{
 };
 
 use futures::{
-    channel::mpsc,
-    future::{self, BoxFuture, RemoteHandle},
+    future::{BoxFuture, RemoteHandle},
     select,
     stream::FuturesUnordered,
-    FutureExt, StreamExt, TryFutureExt,
+    FutureExt, SinkExt, StreamExt, TryFutureExt,
 };
 use rustc_hash::FxHashMap;
 use serde::{de::DeserializeOwned, Serialize};
@@ -22,6 +21,7 @@ use crate::{
     packet_multiplexer::{ChannelStatistics, PacketChannel, PacketMultiplexer},
     reliable_channel,
     runtime::Runtime,
+    spsc::{self, TryRecvError},
     unreliable_channel,
 };
 
@@ -32,10 +32,10 @@ use crate::{
 pub struct MessageChannelSettings {
     pub channel: PacketChannel,
     pub channel_mode: MessageChannelMode,
-    /// The buffer size for the mpsc channel of messages that transports messages of this type to /
+    /// The buffer size for the spsc channel of messages that transports messages of this type to /
     /// from the network task.
     pub message_buffer_size: usize,
-    /// The buffer size for the mpsc channel of packets for this message type that transports
+    /// The buffer size for the spsc channel of packets for this message type that transports
     /// packets to / from the packet multiplexer.
     pub packet_buffer_size: usize,
 }
@@ -229,8 +229,8 @@ impl MessageChannels {
     /// In order to ensure delivery, `flush` should be called for the same message type to
     /// immediately send any buffered messages.
     ///
-    /// If the mpsc channel for this message type is full, will return the message that was sent
-    /// back to the caller. If the message was successfully put onto the outgoing mpsc channel, will
+    /// If the spsc channel for this message type is full, will return the message that was sent
+    /// back to the caller. If the message was successfully put onto the outgoing spsc channel, will
     /// return None.
     ///
     /// # Panics
@@ -291,11 +291,7 @@ impl MessageChannels {
         if self.disconnected {
             Err(MessageChannelsDisconnected.into())
         } else {
-            let res = async {
-                future::poll_fn(|cx| channels.outgoing_sender.poll_ready(cx)).await?;
-                channels.outgoing_sender.start_send(message)
-            }
-            .await;
+            let res = channels.outgoing_sender.send(message).await;
 
             if res.is_err() {
                 self.disconnected = true;
@@ -341,13 +337,14 @@ impl MessageChannels {
         Ok(if self.disconnected {
             None
         } else {
-            match channels.incoming_receiver.try_next() {
-                Ok(None) => {
-                    self.disconnected = true;
+            match channels.incoming_receiver.try_recv() {
+                Ok(msg) => Some(msg),
+                Err(err) => {
+                    if err.is_disconnected() {
+                        self.disconnected = true;
+                    }
                     None
                 }
-                Ok(Some(msg)) => Some(msg),
-                Err(_) => None,
             }
         })
     }
@@ -408,8 +405,8 @@ type RegisterFn<R, P> = fn(
 struct ChannelDisconnected;
 
 struct ChannelSet<M> {
-    outgoing_sender: mpsc::Sender<M>,
-    incoming_receiver: mpsc::Receiver<M>,
+    outgoing_sender: spsc::Sender<M>,
+    incoming_receiver: spsc::Receiver<M>,
     flush_sender: event_watch::Sender,
     statistics: ChannelStatistics,
 }
@@ -464,9 +461,9 @@ where
     }
 
     let (mut incoming_message_sender, incoming_message_receiver) =
-        mpsc::channel::<M>(settings.message_buffer_size);
+        spsc::channel::<M>(settings.message_buffer_size);
     let (outgoing_message_sender, mut outgoing_message_receiver) =
-        mpsc::channel::<M>(settings.message_buffer_size);
+        spsc::channel::<M>(settings.message_buffer_size);
 
     let (flush_sender, mut flush_receiver) = event_watch::channel();
 
@@ -495,26 +492,30 @@ where
                     let next = {
                         select! {
                             incoming = channel.recv().fuse() => Next::Incoming(incoming?),
-                            outgoing = outgoing_message_receiver.next().fuse() => Next::Outgoing(outgoing.ok_or(ChannelDisconnected)?),
+                            outgoing = outgoing_message_receiver.next().fuse() => {
+                                Next::Outgoing(outgoing.ok_or(ChannelDisconnected)?)
+                            }
                             _ = flush_receiver.wait().fuse() => Next::Flush,
                         }
                     };
 
                     match next {
-                        Next::Incoming(incoming) => {
-                            future::poll_fn(|cx| incoming_message_sender.poll_ready(cx)).await?;
-                            incoming_message_sender.start_send(incoming)?;
-                        }
-                        Next::Outgoing(outgoing) => {
-                            channel.send(&outgoing).await?;
-                        }
-                        Next::Flush => {
-                            while let Ok(outgoing) = outgoing_message_receiver.try_next() {
-                                let outgoing = outgoing.ok_or(ChannelDisconnected)?;
-                                channel.send(&outgoing).await?;
+                        Next::Incoming(incoming) => incoming_message_sender.send(incoming).await?,
+                        Next::Outgoing(outgoing) => channel.send(&outgoing).await?,
+                        Next::Flush => loop {
+                            match outgoing_message_receiver.try_recv() {
+                                Ok(outgoing) => {
+                                    channel.send(&outgoing).await?;
+                                }
+                                Err(TryRecvError::Disconnected) => {
+                                    return Err(ChannelDisconnected.into())
+                                }
+                                Err(TryRecvError::Empty) => {
+                                    channel.flush().await?;
+                                    break;
+                                }
                             }
-                            channel.flush().await?;
-                        }
+                        },
                     }
                 }
             }
@@ -547,20 +548,22 @@ where
                     };
 
                     match next {
-                        Next::Incoming(incoming) => {
-                            future::poll_fn(|cx| incoming_message_sender.poll_ready(cx)).await?;
-                            incoming_message_sender.start_send(incoming)?;
-                        }
-                        Next::Outgoing(outgoing) => {
-                            channel.send(&outgoing).await?;
-                        }
-                        Next::Flush => {
-                            while let Ok(outgoing) = outgoing_message_receiver.try_next() {
-                                let outgoing = outgoing.ok_or(ChannelDisconnected)?;
-                                channel.send(&outgoing).await?;
+                        Next::Incoming(incoming) => incoming_message_sender.send(incoming).await?,
+                        Next::Outgoing(outgoing) => channel.send(&outgoing).await?,
+                        Next::Flush => loop {
+                            match outgoing_message_receiver.try_recv() {
+                                Ok(outgoing) => {
+                                    channel.send(&outgoing).await?;
+                                }
+                                Err(TryRecvError::Disconnected) => {
+                                    return Err(ChannelDisconnected.into())
+                                }
+                                Err(TryRecvError::Empty) => {
+                                    channel.flush().await?;
+                                    break;
+                                }
                             }
-                            channel.flush().await?;
-                        }
+                        },
                     }
                 }
             }
@@ -593,20 +596,22 @@ where
                     };
 
                     match next {
-                        Next::Incoming(incoming) => {
-                            future::poll_fn(|cx| incoming_message_sender.poll_ready(cx)).await?;
-                            incoming_message_sender.start_send(incoming)?;
-                        }
-                        Next::Outgoing(outgoing) => {
-                            channel.send(&outgoing).await?;
-                        }
-                        Next::Flush => {
-                            while let Ok(outgoing) = outgoing_message_receiver.try_next() {
-                                let outgoing = outgoing.ok_or(ChannelDisconnected)?;
-                                channel.send(&outgoing).await?;
+                        Next::Incoming(incoming) => incoming_message_sender.send(incoming).await?,
+                        Next::Outgoing(outgoing) => channel.send(&outgoing).await?,
+                        Next::Flush => loop {
+                            match outgoing_message_receiver.try_recv() {
+                                Ok(outgoing) => {
+                                    channel.send(&outgoing).await?;
+                                }
+                                Err(TryRecvError::Disconnected) => {
+                                    return Err(ChannelDisconnected.into())
+                                }
+                                Err(TryRecvError::Empty) => {
+                                    channel.flush().await?;
+                                    break;
+                                }
                             }
-                            channel.flush().await?;
-                        }
+                        },
                     }
                 }
             }

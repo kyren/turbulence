@@ -2,11 +2,10 @@ use std::{i16, num::Wrapping, pin::Pin, sync::Arc, task::Poll, time::Duration, u
 
 use byteorder::{ByteOrder, LittleEndian};
 use futures::{
-    channel::mpsc,
     future::{self, Fuse, FusedFuture, RemoteHandle},
     select, select_biased,
     task::AtomicWaker,
-    FutureExt, StreamExt,
+    FutureExt, SinkExt, StreamExt,
 };
 use rustc_hash::FxHashMap;
 use thiserror::Error;
@@ -15,6 +14,7 @@ use crate::{
     bandwidth_limiter::BandwidthLimiter,
     packet::{Packet, PacketPool},
     runtime::Runtime,
+    spsc,
     windows::{
         stream_gt, AckResult, RecvWindow, RecvWindowReader, SendWindow, SendWindowWriter, StreamPos,
     },
@@ -80,8 +80,8 @@ impl ReliableChannel {
         runtime: R,
         packet_pool: P,
         settings: Settings,
-        incoming: mpsc::Receiver<P::Packet>,
-        outgoing: mpsc::Sender<P::Packet>,
+        incoming: spsc::Receiver<P::Packet>,
+        outgoing: spsc::Sender<P::Packet>,
     ) -> Self
     where
         R: Runtime + 'static,
@@ -158,13 +158,18 @@ impl ReliableChannel {
             let send_window_writer = &mut self.send_window_writer;
             let shared = &self.shared;
             move |cx| {
-                shared.write_ready.register(&cx.waker());
                 let len = send_window_writer.write(data);
                 if len > 0 {
                     Poll::Ready(len)
                 } else {
-                    shared.send_ready.wake();
-                    Poll::Pending
+                    shared.write_ready.register(cx.waker());
+                    let len = send_window_writer.write(data);
+                    if len > 0 {
+                        Poll::Ready(len)
+                    } else {
+                        shared.send_ready.wake();
+                        Poll::Pending
+                    }
                 }
             }
         })
@@ -206,12 +211,17 @@ impl ReliableChannel {
             let recv_window_reader = &mut self.recv_window_reader;
             let shared = &self.shared;
             move |cx| {
-                shared.read_ready.register(&cx.waker());
                 let len = recv_window_reader.read(data);
                 if len > 0 {
                     Poll::Ready(len)
                 } else {
-                    Poll::Pending
+                    shared.read_ready.register(cx.waker());
+                    let len = recv_window_reader.read(data);
+                    if len > 0 {
+                        Poll::Ready(len)
+                    } else {
+                        Poll::Pending
+                    }
                 }
             }
         })
@@ -246,8 +256,8 @@ where
     runtime: R,
     settings: Settings,
     packet_pool: P,
-    incoming: mpsc::Receiver<P::Packet>,
-    outgoing: mpsc::Sender<P::Packet>,
+    incoming: spsc::Receiver<P::Packet>,
+    outgoing: spsc::Sender<P::Packet>,
 
     shared: Arc<Shared>,
     send_window: SendWindow,
@@ -301,8 +311,10 @@ where
                     // Don't wake up for sending new data until we have bandwidth available.
                     bandwidth_limiter.delay_until_available().await;
 
-                    future::poll_fn({
-                        |cx| {
+                    future::poll_fn(|cx| {
+                        if send_window.send_available() > 0 {
+                            Poll::Ready(())
+                        } else {
                             shared.send_ready.register(cx.waker());
                             if send_window.send_available() > 0 {
                                 Poll::Ready(())
@@ -317,7 +329,7 @@ where
 
                 select! {
                     _ = { resend_timer } => WakeReason::ResendTimer,
-                    incoming_packet = self.incoming.next() => {
+                    incoming_packet = self.incoming.next().fuse() => {
                         WakeReason::IncomingPacket(incoming_packet.ok_or(Error::Disconnected)?)
                     },
                     _ = { send_available } => WakeReason::SendAvailable,
@@ -393,11 +405,9 @@ where
         );
 
         self.bandwidth_limiter.take_bytes(packet.len() as u32);
-        future::poll_fn(|cx| self.outgoing.poll_ready(cx))
-            .await
-            .map_err(|_| Error::Disconnected)?;
         self.outgoing
-            .start_send(packet)
+            .send(packet)
+            .await
             .map_err(|_| Error::Disconnected)?;
 
         self.remote_recv_available -= send_amt;
@@ -435,12 +445,9 @@ where
 
                 self.bandwidth_limiter.take_bytes(packet.len() as u32);
 
-                let outgoing = &mut self.outgoing;
-                future::poll_fn(|cx| outgoing.poll_ready(cx))
+                self.outgoing
+                    .send(packet)
                     .await
-                    .map_err(|_| Error::Disconnected)?;
-                outgoing
-                    .start_send(packet)
                     .map_err(|_| Error::Disconnected)?;
             }
         }
@@ -545,11 +552,9 @@ where
 
                 // We currently do not count acknowledgement packets against the outgoing bandwidth
                 // at all.
-                future::poll_fn(|cx| self.outgoing.poll_ready(cx))
-                    .await
-                    .map_err(|_| Error::Disconnected)?;
                 self.outgoing
-                    .start_send(ack_packet)
+                    .send(ack_packet)
+                    .await
                     .map_err(|_| Error::Disconnected)?;
 
                 if self.recv_window.read_available() > 0 {

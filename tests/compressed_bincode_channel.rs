@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use futures::channel::{mpsc, oneshot};
+use futures::channel::oneshot;
 use rand::{rngs::SmallRng, thread_rng, RngCore, SeedableRng};
 
 use turbulence::{
@@ -8,6 +8,7 @@ use turbulence::{
     compressed_bincode_channel::CompressedBincodeChannel,
     reliable_channel::{ReliableChannel, Settings},
     runtime::Runtime,
+    spsc,
 };
 
 mod util;
@@ -39,8 +40,8 @@ fn test_compressed_bincode_channel() {
     let packet_pool = BufferPacketPool::new(SimpleBufferPool(1000));
     let mut runtime = SimpleRuntime::new();
 
-    let (asend, acondrecv) = mpsc::channel(2);
-    let (acondsend, arecv) = mpsc::channel(2);
+    let (asend, acondrecv) = spsc::channel(2);
+    let (acondsend, arecv) = spsc::channel(2);
     condition_link(
         CONDITION,
         runtime.handle(),
@@ -50,8 +51,8 @@ fn test_compressed_bincode_channel() {
         acondsend,
     );
 
-    let (bsend, bcondrecv) = mpsc::channel(2);
-    let (bcondsend, brecv) = mpsc::channel(2);
+    let (bsend, bcondrecv) = spsc::channel(2);
+    let (bcondsend, brecv) = spsc::channel(2);
     condition_link(
         CONDITION,
         runtime.handle(),
