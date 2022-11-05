@@ -129,10 +129,8 @@ where
     /// This method is cancel safe, it will never partially read a message or drop received
     /// messages.
     pub async fn recv<'a>(&'a mut self) -> Result<&'a [u8], RecvError> {
-        // We have to split this into two separate function calls due to lifetime limitations of
-        // `poll_fn`.
-        future::poll_fn(|cx| self.poll_recv_packet(cx)).await?;
-        self.next_msg()
+        future::poll_fn(|cx| self.poll_recv_ready(cx)).await?;
+        self.recv_next()
     }
 
     pub fn poll_send(&mut self, cx: &mut Context, msg: &[u8]) -> Poll<Result<(), SendError>> {
@@ -186,13 +184,11 @@ where
     }
 
     pub fn poll_recv(&mut self, cx: &mut Context) -> Poll<Result<&[u8], RecvError>> {
-        ready!(self.poll_recv_packet(cx))?;
-        Poll::Ready(self.next_msg())
+        ready!(self.poll_recv_ready(cx))?;
+        Poll::Ready(self.recv_next())
     }
 
-    // Make sure we are ready to call `next_msg`. Split into two methods due to poll_fn lifetime
-    // limitations (which also prevents implementing a custom `Future`).
-    fn poll_recv_packet(&mut self, cx: &mut Context) -> Poll<Result<(), RecvError>> {
+    fn poll_recv_ready(&mut self, cx: &mut Context) -> Poll<Result<(), RecvError>> {
         if let Some((packet, in_pos)) = &self.in_packet {
             if *in_pos == packet.len() {
                 self.in_packet = None;
@@ -207,8 +203,7 @@ where
         Poll::Ready(Ok(()))
     }
 
-    // Must call `poll_recv_packet` beforehand until it completes.
-    fn next_msg(&mut self) -> Result<&[u8], RecvError> {
+    fn recv_next(&mut self) -> Result<&[u8], RecvError> {
         let (packet, in_pos) = self.in_packet.as_mut().unwrap();
         assert_ne!(*in_pos, packet.len());
 

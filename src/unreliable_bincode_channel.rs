@@ -1,6 +1,10 @@
-use std::marker::PhantomData;
+use std::{
+    marker::PhantomData,
+    task::{Context, Poll},
+};
 
 use bincode::Options as _;
+use futures::{future, ready};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -16,7 +20,7 @@ pub enum SendError {
     UnreliableChannelError(#[from] unreliable_channel::SendError),
     /// Non-fatal error, message is unsent.
     #[error("bincode serialization error: {0}")]
-    BincodeError(bincode::Error),
+    BincodeError(#[from] bincode::Error),
 }
 
 #[derive(Debug, Error)]
@@ -25,7 +29,7 @@ pub enum RecvError {
     UnreliableChannelError(#[from] unreliable_channel::RecvError),
     /// Non-fatal error, message is skipped.
     #[error("bincode serialization error: {0}")]
-    BincodeError(bincode::Error),
+    BincodeError(#[from] bincode::Error),
 }
 
 /// Wraps an `UnreliableChannel` together with an internal buffer to allow easily sending message
@@ -69,17 +73,8 @@ where
     /// This method is cancel safe, it will never partially send a message, and completes
     /// immediately upon successfully queuing a message to send.
     pub async fn send<T: Serialize>(&mut self, msg: &T) -> Result<(), SendError> {
-        self.finish_write().await?;
-
-        let bincode_config = self.bincode_config();
-        let mut w = &mut self.buffer[..];
-        bincode_config
-            .serialize_into(&mut w, msg)
-            .map_err(SendError::BincodeError)?;
-
-        let remaining = w.len();
-        self.pending_write = (self.buffer.len() - remaining) as u16;
-
+        future::poll_fn(|cx| self.poll_send_ready(cx)).await?;
+        self.start_send(msg)?;
         Ok(())
     }
 
@@ -90,8 +85,7 @@ where
     ///
     /// This method is cancel safe.
     pub async fn flush(&mut self) -> Result<(), unreliable_channel::SendError> {
-        self.finish_write().await?;
-        Ok(self.channel.flush().await?)
+        future::poll_fn(|cx| self.poll_flush(cx)).await
     }
 
     /// Receive a deserializable message type as soon as the next message is available.
@@ -101,19 +95,51 @@ where
     pub async fn recv<'a, T: Deserialize<'a>>(&'a mut self) -> Result<T, RecvError> {
         let bincode_config = self.bincode_config();
         let msg = self.channel.recv().await?;
-        bincode_config
-            .deserialize(msg)
-            .map_err(RecvError::BincodeError)
+        Ok(bincode_config.deserialize(msg)?)
     }
 
-    async fn finish_write(&mut self) -> Result<(), unreliable_channel::SendError> {
+    pub fn poll_send_ready(
+        &mut self,
+        cx: &mut Context,
+    ) -> Poll<Result<(), unreliable_channel::SendError>> {
         if self.pending_write != 0 {
-            self.channel
-                .send(&self.buffer[0..self.pending_write as usize])
-                .await?;
+            ready!(self
+                .channel
+                .poll_send(cx, &self.buffer[0..self.pending_write as usize]))?;
             self.pending_write = 0;
         }
+        Poll::Ready(Ok(()))
+    }
+
+    pub fn start_send<T: Serialize>(&mut self, msg: &T) -> Result<(), bincode::Error> {
+        assert!(self.pending_write == 0);
+
+        let bincode_config = self.bincode_config();
+        let mut w = &mut self.buffer[..];
+        bincode_config.serialize_into(&mut w, msg)?;
+
+        let remaining = w.len();
+        self.pending_write = (self.buffer.len() - remaining) as u16;
+
         Ok(())
+    }
+
+    pub fn poll_flush(
+        &mut self,
+        cx: &mut Context,
+    ) -> Poll<Result<(), unreliable_channel::SendError>> {
+        ready!(self.poll_send_ready(cx))?;
+        ready!(self.channel.poll_flush(cx))?;
+        Poll::Ready(Ok(()))
+    }
+
+    pub fn poll_recv<'a, T: Deserialize<'a>>(
+        &'a mut self,
+        cx: &mut Context,
+    ) -> Poll<Result<T, RecvError>> {
+        let bincode_config = self.bincode_config();
+        let msg = ready!(self.channel.poll_recv(cx))?;
+        Poll::Ready(Ok(bincode_config.deserialize(msg)?))
     }
 
     fn bincode_config(&self) -> impl bincode::Options + Copy {
@@ -146,6 +172,20 @@ where
     pub async fn flush(&mut self) -> Result<(), unreliable_channel::SendError> {
         self.channel.flush().await
     }
+
+    pub fn poll_flush(
+        &mut self,
+        cx: &mut Context,
+    ) -> Poll<Result<(), unreliable_channel::SendError>> {
+        self.channel.poll_flush(cx)
+    }
+
+    pub fn poll_send_ready(
+        &mut self,
+        cx: &mut Context,
+    ) -> Poll<Result<(), unreliable_channel::SendError>> {
+        self.channel.poll_send_ready(cx)
+    }
 }
 
 impl<T, R, P> UnreliableTypedChannel<T, R, P>
@@ -157,6 +197,10 @@ where
     pub async fn send(&mut self, msg: &T) -> Result<(), SendError> {
         self.channel.send(msg).await
     }
+
+    pub fn start_send(&mut self, msg: &T) -> Result<(), bincode::Error> {
+        self.channel.start_send(msg)
+    }
 }
 
 impl<'a, T, R, P> UnreliableTypedChannel<T, R, P>
@@ -167,5 +211,9 @@ where
 {
     pub async fn recv(&'a mut self) -> Result<T, RecvError> {
         self.channel.recv().await
+    }
+
+    pub fn poll_recv(&'a mut self, cx: &mut Context) -> Poll<Result<T, RecvError>> {
+        self.channel.poll_recv(cx)
     }
 }

@@ -1,7 +1,13 @@
-use std::{convert::TryInto, marker::PhantomData, u16};
+use std::{
+    convert::TryInto,
+    marker::PhantomData,
+    task::{Context, Poll},
+    u16,
+};
 
 use bincode::Options as _;
 use byteorder::{ByteOrder, LittleEndian};
+use futures::{future, ready};
 use serde::{de::DeserializeOwned, Serialize};
 use snap::raw::{decompress_len, max_compress_len, Decoder as SnapDecoder, Encoder as SnapEncoder};
 use thiserror::Error;
@@ -90,16 +96,7 @@ impl CompressedBincodeChannel {
     /// This method is cancel safe, it will never partially send a message, and completes
     /// immediately upon successfully queuing a message to send.
     pub async fn send<T: Serialize>(&mut self, msg: &T) -> Result<(), SendError> {
-        let bincode_config = self.bincode_config();
-
-        let serialized_len = bincode_config.serialized_size(msg)?;
-        if self.send_chunk.len() as u64 + serialized_len > self.max_chunk_len as u64 {
-            self.write_send_chunk().await?;
-        }
-
-        bincode_config.serialize_into(&mut self.send_chunk, msg)?;
-
-        Ok(())
+        future::poll_fn(|cx| self.poll_send(cx, msg)).await
     }
 
     /// Finish sending the current block of messages, compressing them and sending them over the
@@ -107,10 +104,7 @@ impl CompressedBincodeChannel {
     ///
     /// This method is cancel safe.
     pub async fn flush(&mut self) -> Result<(), reliable_channel::Error> {
-        self.write_send_chunk().await?;
-        self.finish_write().await?;
-        self.channel.flush()?;
-        Ok(())
+        future::poll_fn(|cx| self.poll_flush(cx)).await
     }
 
     /// Receive a message.
@@ -118,6 +112,37 @@ impl CompressedBincodeChannel {
     /// This method is cancel safe, it will never partially receive a message and will never drop a
     /// received message.
     pub async fn recv<T: DeserializeOwned>(&mut self) -> Result<T, RecvError> {
+        future::poll_fn(|cx| self.poll_recv(cx)).await
+    }
+
+    pub fn poll_send<T: Serialize>(
+        &mut self,
+        cx: &mut Context,
+        msg: &T,
+    ) -> Poll<Result<(), SendError>> {
+        let bincode_config = self.bincode_config();
+
+        let serialized_len = bincode_config.serialized_size(msg)?;
+        if self.send_chunk.len() as u64 + serialized_len > self.max_chunk_len as u64 {
+            ready!(self.poll_write_send_chunk(cx))?;
+        }
+
+        bincode_config.serialize_into(&mut self.send_chunk, msg)?;
+
+        Poll::Ready(Ok(()))
+    }
+
+    pub fn poll_flush(&mut self, cx: &mut Context) -> Poll<Result<(), reliable_channel::Error>> {
+        ready!(self.poll_write_send_chunk(cx))?;
+        ready!(self.poll_finish_write(cx))?;
+        self.channel.flush()?;
+        Poll::Ready(Ok(()))
+    }
+
+    pub fn poll_recv<T: DeserializeOwned>(
+        &mut self,
+        cx: &mut Context,
+    ) -> Poll<Result<T, RecvError>> {
         let bincode_config = self.bincode_config();
 
         loop {
@@ -125,26 +150,26 @@ impl CompressedBincodeChannel {
                 let mut reader = &self.recv_chunk[self.recv_pos..];
                 let msg = bincode_config.deserialize_from(&mut reader)?;
                 self.recv_pos = self.recv_chunk.len() - reader.len();
-                return Ok(msg);
+                return Poll::Ready(Ok(msg));
             }
 
             if self.read_pos < 3 {
                 self.read_buffer.resize(3, 0);
-                self.finish_read().await?;
+                ready!(self.poll_finish_read(cx))?;
             }
 
             let compressed = self.read_buffer[0] != 0;
             let chunk_len = LittleEndian::read_u16(&self.read_buffer[1..3]);
             if chunk_len > self.max_chunk_len {
-                return Err(RecvError::ChunkTooLarge);
+                return Poll::Ready(Err(RecvError::ChunkTooLarge));
             }
             self.read_buffer.resize(chunk_len as usize + 3, 0);
-            self.finish_read().await?;
+            ready!(self.poll_finish_read(cx))?;
 
             if compressed {
                 let decompressed_len = decompress_len(&self.read_buffer[3..])?;
                 if decompressed_len > self.max_chunk_len as usize {
-                    return Err(RecvError::ChunkTooLarge);
+                    return Poll::Ready(Err(RecvError::ChunkTooLarge));
                 }
                 self.recv_chunk.resize(decompressed_len, 0);
                 self.decoder
@@ -159,9 +184,12 @@ impl CompressedBincodeChannel {
         }
     }
 
-    async fn write_send_chunk(&mut self) -> Result<(), reliable_channel::Error> {
+    fn poll_write_send_chunk(
+        &mut self,
+        cx: &mut Context,
+    ) -> Poll<Result<(), reliable_channel::Error>> {
         if !self.send_chunk.is_empty() {
-            self.finish_write().await?;
+            ready!(self.poll_finish_write(cx))?;
 
             self.write_pos = 0;
             self.write_buffer
@@ -194,29 +222,27 @@ impl CompressedBincodeChannel {
             self.send_chunk.clear();
         }
 
-        Ok(())
+        Poll::Ready(Ok(()))
     }
 
-    async fn finish_write(&mut self) -> Result<(), reliable_channel::Error> {
+    fn poll_finish_write(&mut self, cx: &mut Context) -> Poll<Result<(), reliable_channel::Error>> {
         while self.write_pos < self.write_buffer.len() {
-            let len = self
+            let len = ready!(self
                 .channel
-                .write(&self.write_buffer[self.write_pos..])
-                .await?;
+                .poll_write(cx, &self.write_buffer[self.write_pos..]))?;
             self.write_pos += len;
         }
-        Ok(())
+        Poll::Ready(Ok(()))
     }
 
-    async fn finish_read(&mut self) -> Result<(), reliable_channel::Error> {
+    fn poll_finish_read(&mut self, cx: &mut Context) -> Poll<Result<(), reliable_channel::Error>> {
         while self.read_pos < self.read_buffer.len() {
-            let len = self
+            let len = ready!(self
                 .channel
-                .read(&mut self.read_buffer[self.read_pos..])
-                .await?;
+                .poll_read(cx, &mut self.read_buffer[self.read_pos..]))?;
             self.read_pos += len;
         }
-        Ok(())
+        Poll::Ready(Ok(()))
     }
 
     fn bincode_config(&self) -> impl bincode::Options + Copy {
@@ -241,16 +267,28 @@ impl<T> CompressedTypedChannel<T> {
     pub async fn flush(&mut self) -> Result<(), reliable_channel::Error> {
         self.channel.flush().await
     }
+
+    pub fn poll_flush(&mut self, cx: &mut Context) -> Poll<Result<(), reliable_channel::Error>> {
+        self.channel.poll_flush(cx)
+    }
 }
 
 impl<T: Serialize> CompressedTypedChannel<T> {
     pub async fn send(&mut self, msg: &T) -> Result<(), SendError> {
         self.channel.send(msg).await
     }
+
+    pub fn poll_send(&mut self, cx: &mut Context, msg: &T) -> Poll<Result<(), SendError>> {
+        self.channel.poll_send(cx, msg)
+    }
 }
 
 impl<T: DeserializeOwned> CompressedTypedChannel<T> {
     pub async fn recv(&mut self) -> Result<T, RecvError> {
         self.channel.recv().await
+    }
+
+    pub fn poll_recv(&mut self, cx: &mut Context) -> Poll<Result<T, RecvError>> {
+        self.channel.poll_recv(cx)
     }
 }
