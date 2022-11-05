@@ -115,6 +115,22 @@ impl<T> Sink<T> for Sender<T> {
 
 impl<T> Sender<T> {
     pub fn try_send(&mut self, t: T) -> Result<(), TrySendError<T>> {
+        if let Some(prev) = self.slot.take() {
+            if let Err(err) = self.channel.try_send(prev) {
+                match err {
+                    TrySendError::Full(inner) => {
+                        self.slot = Some(inner);
+                        return Err(TrySendError::Full(t));
+                    }
+                    TrySendError::Disconnected(inner) => {
+                        self.slot = Some(inner);
+                        return Err(TrySendError::Disconnected(t));
+                    }
+                }
+            } else {
+                self.shared.recv_ready.wake();
+            }
+        }
         self.channel.try_send(t)?;
         self.shared.recv_ready.wake();
         Ok(())

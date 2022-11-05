@@ -2,11 +2,12 @@ use std::{
     any::{type_name, Any, TypeId},
     collections::{hash_map, HashMap, HashSet},
     error::Error,
+    task::{Context, Poll},
 };
 
 use futures::{
-    future::{BoxFuture, RemoteHandle},
-    select,
+    future::{self, BoxFuture, RemoteHandle},
+    ready, select,
     stream::FuturesUnordered,
     FutureExt, SinkExt, StreamExt, TryFutureExt,
 };
@@ -22,7 +23,7 @@ use crate::{
     reliable_channel,
     runtime::Runtime,
     spsc::{self, TryRecvError},
-    unreliable_channel,
+    unreliable_channel, CompressedTypedChannel, ReliableTypedChannel, UnreliableTypedChannel,
 };
 
 // TODO: Message channels are currently always full-duplex, because the unreliable / reliable
@@ -454,31 +455,19 @@ where
     P::Packet: Send,
     M: ChannelMessage,
 {
-    enum Next<M> {
-        Incoming(M),
-        Outgoing(M),
-        Flush,
-    }
-
-    let (mut incoming_message_sender, incoming_message_receiver) =
+    let (incoming_message_sender, incoming_message_receiver) =
         spsc::channel::<M>(settings.message_buffer_size);
-    let (outgoing_message_sender, mut outgoing_message_receiver) =
+    let (outgoing_message_sender, outgoing_message_receiver) =
         spsc::channel::<M>(settings.message_buffer_size);
 
-    let (flush_sender, mut flush_receiver) = event_watch::channel();
+    let (flush_sender, flush_receiver) = event_watch::channel();
 
-    // TODO: Ideally, you would want all the channel types to implement a single trait and not have
-    // to repeat this task implementation for all of them. Unfortunately, for the time being, doing
-    // so would require that the typed channels not use async methods or that the trait would box
-    // the returned futures, because rust doesn't yet support async in traits. Another possibility
-    // would be to have the channels implement poll style traits like Stream and Sink, currently
-    // this is waiting mostly on being able to use `BiLock` in the reliable channel.
     let (channel_task, statistics) = match settings.channel_mode {
         MessageChannelMode::Unreliable {
             settings: unreliable_settings,
             max_message_len,
         } => {
-            let (mut channel, statistics) = builder
+            let (channel, statistics) = builder
                 .open_unreliable_typed_channel(
                     multiplexer,
                     settings.channel,
@@ -487,46 +476,22 @@ where
                     max_message_len,
                 )
                 .expect("duplicate packet channel");
-            let task = async move {
-                loop {
-                    let next = {
-                        select! {
-                            incoming = channel.recv().fuse() => Next::Incoming(incoming?),
-                            outgoing = outgoing_message_receiver.next().fuse() => {
-                                Next::Outgoing(outgoing.ok_or(ChannelDisconnected)?)
-                            }
-                            _ = flush_receiver.wait().fuse() => Next::Flush,
-                        }
-                    };
-
-                    match next {
-                        Next::Incoming(incoming) => incoming_message_sender.send(incoming).await?,
-                        Next::Outgoing(outgoing) => channel.send(&outgoing).await?,
-                        Next::Flush => loop {
-                            match outgoing_message_receiver.try_recv() {
-                                Ok(outgoing) => {
-                                    channel.send(&outgoing).await?;
-                                }
-                                Err(TryRecvError::Disconnected) => {
-                                    return Err(ChannelDisconnected.into())
-                                }
-                                Err(TryRecvError::Empty) => {
-                                    channel.flush().await?;
-                                    break;
-                                }
-                            }
-                        },
-                    }
-                }
-            }
-            .boxed();
-            (task, statistics)
+            (
+                channel_task(
+                    channel,
+                    incoming_message_sender,
+                    outgoing_message_receiver,
+                    flush_receiver,
+                )
+                .boxed(),
+                statistics,
+            )
         }
         MessageChannelMode::Reliable {
             settings: reliable_settings,
             max_message_len,
         } => {
-            let (mut channel, statistics) = builder
+            let (channel, statistics) = builder
                 .open_reliable_typed_channel(
                     multiplexer,
                     settings.channel,
@@ -535,46 +500,22 @@ where
                     max_message_len,
                 )
                 .expect("duplicate packet channel");
-            let task = async move {
-                loop {
-                    let next = {
-                        select! {
-                            incoming = channel.recv().fuse() => Next::Incoming(incoming?),
-                            outgoing = outgoing_message_receiver.next().fuse() => {
-                                Next::Outgoing(outgoing.ok_or(ChannelDisconnected)?)
-                            }
-                            _ = flush_receiver.wait().fuse() => Next::Flush,
-                        }
-                    };
-
-                    match next {
-                        Next::Incoming(incoming) => incoming_message_sender.send(incoming).await?,
-                        Next::Outgoing(outgoing) => channel.send(&outgoing).await?,
-                        Next::Flush => loop {
-                            match outgoing_message_receiver.try_recv() {
-                                Ok(outgoing) => {
-                                    channel.send(&outgoing).await?;
-                                }
-                                Err(TryRecvError::Disconnected) => {
-                                    return Err(ChannelDisconnected.into())
-                                }
-                                Err(TryRecvError::Empty) => {
-                                    channel.flush().await?;
-                                    break;
-                                }
-                            }
-                        },
-                    }
-                }
-            }
-            .boxed();
-            (task, statistics)
+            (
+                channel_task(
+                    channel,
+                    incoming_message_sender,
+                    outgoing_message_receiver,
+                    flush_receiver,
+                )
+                .boxed(),
+                statistics,
+            )
         }
         MessageChannelMode::Compressed {
             settings: reliable_settings,
             max_chunk_len,
         } => {
-            let (mut channel, statistics) = builder
+            let (channel, statistics) = builder
                 .open_compressed_typed_channel(
                     multiplexer,
                     settings.channel,
@@ -583,40 +524,16 @@ where
                     max_chunk_len,
                 )
                 .expect("duplicate packet channel");
-            let task = async move {
-                loop {
-                    let next = {
-                        select! {
-                            incoming = channel.recv().fuse() => Next::Incoming(incoming?),
-                            outgoing = outgoing_message_receiver.next().fuse() => {
-                                Next::Outgoing(outgoing.ok_or(ChannelDisconnected)?)
-                            }
-                            _ = flush_receiver.wait().fuse() => Next::Flush,
-                        }
-                    };
-
-                    match next {
-                        Next::Incoming(incoming) => incoming_message_sender.send(incoming).await?,
-                        Next::Outgoing(outgoing) => channel.send(&outgoing).await?,
-                        Next::Flush => loop {
-                            match outgoing_message_receiver.try_recv() {
-                                Ok(outgoing) => {
-                                    channel.send(&outgoing).await?;
-                                }
-                                Err(TryRecvError::Disconnected) => {
-                                    return Err(ChannelDisconnected.into())
-                                }
-                                Err(TryRecvError::Empty) => {
-                                    channel.flush().await?;
-                                    break;
-                                }
-                            }
-                        },
-                    }
-                }
-            }
-            .boxed();
-            (task, statistics)
+            (
+                channel_task(
+                    channel,
+                    incoming_message_sender,
+                    outgoing_message_receiver,
+                    flush_receiver,
+                )
+                .boxed(),
+                statistics,
+            )
         }
     };
 
@@ -628,4 +545,103 @@ where
     });
 
     channel_task
+}
+
+trait MessageBincodeChannel<M: ChannelMessage> {
+    fn poll_recv(&mut self, cx: &mut Context) -> Poll<Result<M, TaskError>>;
+    fn poll_send(&mut self, cx: &mut Context, msg: &M) -> Poll<Result<(), TaskError>>;
+    fn poll_flush(&mut self, cx: &mut Context) -> Poll<Result<(), TaskError>>;
+}
+
+impl<M, R, P> MessageBincodeChannel<M> for UnreliableTypedChannel<M, R, P>
+where
+    M: ChannelMessage,
+    R: Runtime,
+    P: PacketPool,
+{
+    fn poll_recv(&mut self, cx: &mut Context) -> Poll<Result<M, TaskError>> {
+        UnreliableTypedChannel::poll_recv(self, cx).map_err(|e| e.into())
+    }
+
+    fn poll_send(&mut self, cx: &mut Context, msg: &M) -> Poll<Result<(), TaskError>> {
+        ready!(self.poll_send_ready(cx))?;
+        Poll::Ready(Ok(self.start_send(msg)?))
+    }
+
+    fn poll_flush(&mut self, cx: &mut Context) -> Poll<Result<(), TaskError>> {
+        UnreliableTypedChannel::poll_flush(self, cx).map_err(|e| e.into())
+    }
+}
+
+impl<M: ChannelMessage> MessageBincodeChannel<M> for ReliableTypedChannel<M> {
+    fn poll_recv(&mut self, cx: &mut Context) -> Poll<Result<M, TaskError>> {
+        ReliableTypedChannel::poll_recv(self, cx).map_err(|e| e.into())
+    }
+
+    fn poll_send(&mut self, cx: &mut Context, msg: &M) -> Poll<Result<(), TaskError>> {
+        ready!(self.poll_send_ready(cx))?;
+        Poll::Ready(Ok(self.start_send(msg)?))
+    }
+
+    fn poll_flush(&mut self, cx: &mut Context) -> Poll<Result<(), TaskError>> {
+        ReliableTypedChannel::poll_flush(self, cx).map_err(|e| e.into())
+    }
+}
+
+impl<M: ChannelMessage> MessageBincodeChannel<M> for CompressedTypedChannel<M> {
+    fn poll_recv(&mut self, cx: &mut Context) -> Poll<Result<M, TaskError>> {
+        CompressedTypedChannel::poll_recv(self, cx).map_err(|e| e.into())
+    }
+
+    fn poll_send(&mut self, cx: &mut Context, msg: &M) -> Poll<Result<(), TaskError>> {
+        CompressedTypedChannel::poll_send(self, cx, msg).map_err(|e| e.into())
+    }
+
+    fn poll_flush(&mut self, cx: &mut Context) -> Poll<Result<(), TaskError>> {
+        CompressedTypedChannel::poll_flush(self, cx).map_err(|e| e.into())
+    }
+}
+
+async fn channel_task<M: ChannelMessage>(
+    mut channel: impl MessageBincodeChannel<M>,
+    mut incoming_message_sender: spsc::Sender<M>,
+    mut outgoing_message_receiver: spsc::Receiver<M>,
+    mut flush_receiver: event_watch::Receiver,
+) -> Result<(), TaskError> {
+    enum Next<M> {
+        Incoming(M),
+        Outgoing(M),
+        Flush,
+    }
+
+    loop {
+        let next = {
+            select! {
+                incoming = future::poll_fn(|cx| channel.poll_recv(cx)).fuse() => {
+                    Next::Incoming(incoming?)
+                }
+                outgoing = outgoing_message_receiver.next().fuse() => {
+                    Next::Outgoing(outgoing.ok_or(ChannelDisconnected)?)
+                }
+                _ = flush_receiver.wait().fuse() => Next::Flush,
+            }
+        };
+
+        match next {
+            Next::Incoming(incoming) => incoming_message_sender.send(incoming).await?,
+            Next::Outgoing(outgoing) => {
+                future::poll_fn(|cx| channel.poll_send(cx, &outgoing)).await?
+            }
+            Next::Flush => loop {
+                match outgoing_message_receiver.try_recv() {
+                    Ok(outgoing) => future::poll_fn(|cx| channel.poll_send(cx, &outgoing)).await?,
+                    Err(TryRecvError::Disconnected) => return Err(ChannelDisconnected.into()),
+                    Err(TryRecvError::Empty) => {
+                        future::poll_fn(|cx| channel.poll_flush(cx)).await?;
+                        break;
+                    }
+                }
+            },
+        }
+    }
 }
