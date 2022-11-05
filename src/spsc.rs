@@ -30,7 +30,7 @@ impl<T> Unpin for Receiver<T> {}
 impl<T> Stream for Receiver<T> {
     type Item = T;
 
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<T>> {
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<T>> {
         match self.try_recv() {
             Ok(r) => Poll::Ready(Some(r)),
             Err(TryRecvError::Disconnected) => Poll::Ready(None),
@@ -75,7 +75,7 @@ impl<T> Unpin for Sender<T> {}
 impl<T> Sink<T> for Sender<T> {
     type Error = Disconnected;
 
-    fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+    fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
         if let Some(t) = self.slot.take() {
             match self.try_send(t) {
                 Ok(()) => Poll::Ready(Ok(())),
@@ -104,12 +104,12 @@ impl<T> Sink<T> for Sender<T> {
         Ok(())
     }
 
-    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
         self.poll_ready(cx)
     }
 
-    fn poll_close(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Poll::Ready(Ok(()))
+    fn poll_close(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
+        self.poll_flush(cx)
     }
 }
 

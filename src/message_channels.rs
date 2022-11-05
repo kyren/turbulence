@@ -107,7 +107,7 @@ impl<R, P> MessageChannelsBuilder<R, P>
 where
     R: Runtime + 'static,
     P: PacketPool + Clone + Send + 'static,
-    P::Packet: Unpin + Send,
+    P::Packet: Send,
 {
     /// Register this message type on the constructed `MessageChannels`, using the given channel
     /// settings.
@@ -451,7 +451,7 @@ fn register_message_type<R, P, M>(
 where
     R: Runtime + 'static,
     P: PacketPool + Clone + Send + 'static,
-    P::Packet: Unpin + Send,
+    P::Packet: Send,
     M: ChannelMessage,
 {
     enum Next<M> {

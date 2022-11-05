@@ -24,13 +24,13 @@ impl<R: Runtime> BandwidthLimiter<R> {
     }
 
     /// Delay until a time where there will be bandwidth available.
-    pub async fn delay_until_available(&self) {
+    pub fn delay_until_available(&self) -> Option<R::Sleep> {
         if self.bytes_available < 0. {
-            self.runtime
-                .sleep(Duration::from_secs_f64(
-                    (-self.bytes_available) / self.bandwidth as f64,
-                ))
-                .await;
+            Some(self.runtime.sleep(Duration::from_secs_f64(
+                (-self.bytes_available) / self.bandwidth as f64,
+            )))
+        } else {
+            None
         }
     }
 

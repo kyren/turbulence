@@ -94,7 +94,7 @@ impl ReliableBincodeChannel {
     /// This method is cancel safe.
     pub async fn flush(&mut self) -> Result<(), reliable_channel::Error> {
         self.finish_write().await?;
-        Ok(self.channel.flush().await?)
+        Ok(self.channel.flush()?)
     }
 
     /// Read the next available incoming message.

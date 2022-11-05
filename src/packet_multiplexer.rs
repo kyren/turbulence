@@ -11,7 +11,7 @@ use std::{
     u8,
 };
 
-use futures::{stream::SelectAll, Sink, Stream};
+use futures::{stream::SelectAll, Sink, SinkExt, Stream, StreamExt};
 use rustc_hash::{FxHashMap, FxHashSet};
 use thiserror::Error;
 
@@ -280,20 +280,20 @@ where
     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
         if let Some(packet) = self.to_send.take() {
             let channel = packet[0];
-            let incoming = &mut self
+            let incoming = self
                 .incoming
                 .get_mut(&channel)
                 .ok_or(IncomingError::UnknownPacketChannel)?;
-            let mut sender = Pin::new(&mut incoming.sender);
-            match sender.as_mut().poll_ready(cx) {
+            match incoming.sender.poll_ready_unpin(cx) {
                 Poll::Pending => {
                     self.to_send = Some(packet);
                     Poll::Pending
                 }
                 Poll::Ready(Ok(())) => {
                     let mux_packet_len = (packet.len() - 1) as u64;
-                    sender
-                        .start_send(MuxPacket(packet))
+                    incoming
+                        .sender
+                        .start_send_unpin(MuxPacket(packet))
                         .map_err(|_| IncomingError::ChannelReceiverDropped)?;
                     incoming.statistics.mark_incoming_packet(mux_packet_len);
                     self.to_flush.insert(channel);
@@ -317,15 +317,13 @@ where
             return Poll::Pending;
         }
         while let Some(&channel) = self.to_flush.iter().next() {
-            let sender = Pin::new(
-                &mut self
-                    .incoming
-                    .get_mut(&channel)
-                    .ok_or(IncomingError::UnknownPacketChannel)?
-                    .sender,
-            );
-            if sender
-                .poll_flush(cx)
+            let incoming = self
+                .incoming
+                .get_mut(&channel)
+                .ok_or(IncomingError::UnknownPacketChannel)?;
+            if incoming
+                .sender
+                .poll_flush_unpin(cx)
                 .map_err(|_| IncomingError::ChannelReceiverDropped)?
                 .is_pending()
             {
@@ -353,7 +351,7 @@ where
     type Item = P;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
-        Pin::new(&mut self.outgoing).poll_next(cx)
+        self.outgoing.poll_next_unpin(cx)
     }
 }
 
@@ -377,7 +375,7 @@ where
     type Item = P;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
-        match Pin::new(&mut self.receiver).poll_next(cx) {
+        match self.receiver.poll_next_unpin(cx) {
             Poll::Ready(Some(packet)) => {
                 let mut packet = packet.0;
                 packet[0] = self.channel;

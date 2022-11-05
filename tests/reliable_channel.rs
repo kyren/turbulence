@@ -98,7 +98,7 @@ fn test_reliable_stream() {
                     .unwrap();
 
                 if c % FLUSH_EVERY >= (c + len) % FLUSH_EVERY {
-                    stream1.flush().await.unwrap();
+                    stream1.flush().unwrap();
                 }
 
                 if c < SEND_DELAY_NEAR && c + len > SEND_DELAY_NEAR {
@@ -108,7 +108,7 @@ fn test_reliable_stream() {
                 c += len;
 
                 if c == END_POS {
-                    stream1.flush().await.unwrap();
+                    stream1.flush().unwrap();
                     break;
                 }
             }

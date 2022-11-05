@@ -4,8 +4,8 @@ use std::{future::Future, time::Duration};
 ///
 /// This is designed so that it can be implemented on multiple platforms with multiple runtimes,
 /// including `wasm32-unknown-unknown`, where `std::time::Instant` is unavailable.
-pub trait Runtime: Clone + Send + Sync + Unpin {
-    type Instant: Copy + Send + Sync + Unpin;
+pub trait Runtime: Clone + Send + Sync {
+    type Instant: Copy + Send + Sync;
     type Sleep: Future<Output = ()> + Send;
 
     /// This is similar to the `futures::task::Spawn` trait, but it is generic in the spawned

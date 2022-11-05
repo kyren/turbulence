@@ -109,7 +109,7 @@ impl CompressedBincodeChannel {
     pub async fn flush(&mut self) -> Result<(), reliable_channel::Error> {
         self.write_send_chunk().await?;
         self.finish_write().await?;
-        self.channel.flush().await?;
+        self.channel.flush()?;
         Ok(())
     }
 

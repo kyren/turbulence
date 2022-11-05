@@ -1,9 +1,17 @@
-use std::{i16, num::Wrapping, pin::Pin, sync::Arc, task::Poll, time::Duration, u32};
+use std::{
+    i16,
+    num::Wrapping,
+    pin::Pin,
+    sync::Arc,
+    task::{Context, Poll},
+    time::Duration,
+    u32,
+};
 
 use byteorder::{ByteOrder, LittleEndian};
 use futures::{
     future::{self, Fuse, FusedFuture, RemoteHandle},
-    select, select_biased,
+    select,
     task::AtomicWaker,
     FutureExt, SinkExt, StreamExt,
 };
@@ -150,44 +158,14 @@ impl ReliableChannel {
     /// This method is cancel safe, it completes immediately once any amount of data is written,
     /// dropping an incomplete future will have no effect.
     pub async fn write(&mut self, data: &[u8]) -> Result<usize, Error> {
-        if self.task.is_terminated() {
-            return Err(Error::Shutdown);
-        }
-
-        let mut write_done = future::poll_fn({
-            let send_window_writer = &mut self.send_window_writer;
-            let shared = &self.shared;
-            move |cx| {
-                let len = send_window_writer.write(data);
-                if len > 0 {
-                    Poll::Ready(len)
-                } else {
-                    shared.write_ready.register(cx.waker());
-                    let len = send_window_writer.write(data);
-                    if len > 0 {
-                        Poll::Ready(len)
-                    } else {
-                        shared.send_ready.wake();
-                        Poll::Pending
-                    }
-                }
-            }
-        })
-        .fuse();
-
-        select_biased! {
-            error = &mut self.task => Err(error),
-            len = write_done => Ok(len as usize),
-        }
+        future::poll_fn(|cx| self.poll_write(cx, data)).await
     }
 
     /// Ensure that any previously written data will be fully sent.
     ///
     /// Returns once the sending task has been notified to wake up and will send the written data
     /// promptly. Does *not* actually wait for outgoing packets to be sent before returning.
-    ///
-    /// This method is cancel safe.
-    pub async fn flush(&mut self) -> Result<(), Error> {
+    pub fn flush(&mut self) -> Result<(), Error> {
         if self.task.is_terminated() {
             Err(Error::Shutdown)
         } else if let Some(error) = (&mut self.task).now_or_never() {
@@ -203,33 +181,61 @@ impl ReliableChannel {
     /// This method is cancel safe, it completes immediately once any amount of data is read,
     /// dropping an incomplete future will have no effect.
     pub async fn read(&mut self, data: &mut [u8]) -> Result<usize, Error> {
+        future::poll_fn(|cx| self.poll_read(cx, data)).await
+    }
+
+    pub fn poll_write(&mut self, cx: &mut Context, data: &[u8]) -> Poll<Result<usize, Error>> {
         if self.task.is_terminated() {
-            return Err(Error::Shutdown);
+            return Poll::Ready(Err(Error::Shutdown));
         }
 
-        let mut read_done = future::poll_fn({
-            let recv_window_reader = &mut self.recv_window_reader;
-            let shared = &self.shared;
-            move |cx| {
-                let len = recv_window_reader.read(data);
-                if len > 0 {
-                    Poll::Ready(len)
-                } else {
-                    shared.read_ready.register(cx.waker());
-                    let len = recv_window_reader.read(data);
-                    if len > 0 {
-                        Poll::Ready(len)
-                    } else {
-                        Poll::Pending
-                    }
-                }
-            }
-        })
-        .fuse();
+        if let Poll::Ready(err) = self.task.poll_unpin(cx) {
+            return Poll::Ready(Err(err));
+        }
 
-        select_biased! {
-            error = &mut self.task => Err(error),
-            len = read_done => Ok(len as usize),
+        if data.is_empty() {
+            return Poll::Ready(Ok(0));
+        }
+
+        let len = self.send_window_writer.write(data);
+        if len > 0 {
+            Poll::Ready(Ok(len as usize))
+        } else {
+            self.shared.write_ready.register(cx.waker());
+            let len = self.send_window_writer.write(data);
+            if len > 0 {
+                Poll::Ready(Ok(len as usize))
+            } else {
+                self.shared.send_ready.wake();
+                Poll::Pending
+            }
+        }
+    }
+
+    pub fn poll_read(&mut self, cx: &mut Context, data: &mut [u8]) -> Poll<Result<usize, Error>> {
+        if self.task.is_terminated() {
+            return Poll::Ready(Err(Error::Shutdown));
+        }
+
+        if let Poll::Ready(err) = self.task.poll_unpin(cx) {
+            return Poll::Ready(Err(err));
+        }
+
+        if data.is_empty() {
+            return Poll::Ready(Ok(0));
+        }
+
+        let len = self.recv_window_reader.read(data);
+        if len > 0 {
+            Poll::Ready(Ok(len as usize))
+        } else {
+            self.shared.read_ready.register(cx.waker());
+            let len = self.recv_window_reader.read(data);
+            if len > 0 {
+                Poll::Ready(Ok(len as usize))
+            } else {
+                Poll::Pending
+            }
         }
     }
 }
@@ -294,7 +300,9 @@ where
                     }
                     // Don't bother waking up for the resend timer until we have bandwidth available
                     // to do resends.
-                    bandwidth_limiter.delay_until_available().await;
+                    if let Some(delay) = bandwidth_limiter.delay_until_available() {
+                        delay.await;
+                    }
                 }
                 .fuse();
 
@@ -309,7 +317,9 @@ where
                     }
 
                     // Don't wake up for sending new data until we have bandwidth available.
-                    bandwidth_limiter.delay_until_available().await;
+                    if let Some(delay) = bandwidth_limiter.delay_until_available() {
+                        delay.await;
+                    }
 
                     future::poll_fn(|cx| {
                         if send_window.send_available() > 0 {

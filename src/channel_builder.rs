@@ -24,7 +24,7 @@ impl<R, P> ChannelBuilder<R, P>
 where
     R: Runtime + 'static,
     P: PacketPool + Clone + Send + 'static,
-    P::Packet: Unpin + Send,
+    P::Packet: Send,
 {
     pub fn new(runtime: R, pool: P) -> Self {
         ChannelBuilder {
