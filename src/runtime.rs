@@ -4,8 +4,8 @@ use std::{future::Future, time::Duration};
 ///
 /// This is designed so that it can be implemented on multiple platforms with multiple runtimes,
 /// including `wasm32-unknown-unknown`, where `std::time::Instant` is unavailable.
-pub trait Runtime: Clone + Send + Sync {
-    type Instant: Copy + Send + Sync;
+pub trait Runtime: Send + Sync {
+    type Instant: Send + Sync + Copy;
     type Sleep: Future<Output = ()> + Send;
 
     /// This is similar to the `futures::task::Spawn` trait, but it is generic in the spawned
@@ -16,8 +16,6 @@ pub trait Runtime: Clone + Send + Sync {
 
     /// Return the current instant.
     fn now(&self) -> Self::Instant;
-    /// Return the time elapsed since the given instant.
-    fn elapsed(&self, instant: Self::Instant) -> Duration;
 
     /// Similarly to `std::time::Instant::duration_since`, may panic if `later` comes before
     /// `earlier`.
@@ -25,32 +23,4 @@ pub trait Runtime: Clone + Send + Sync {
 
     /// Create a future which resolves after the given time has passed.
     fn sleep(&self, duration: Duration) -> Self::Sleep;
-}
-
-impl<'a, R: Runtime> Runtime for &'a R {
-    type Instant = R::Instant;
-    type Sleep = R::Sleep;
-
-    fn spawn<F>(&self, future: F)
-    where
-        F: Future<Output = ()> + Send + 'static,
-    {
-        (**self).spawn(future);
-    }
-
-    fn now(&self) -> Self::Instant {
-        (**self).now()
-    }
-
-    fn elapsed(&self, instant: Self::Instant) -> Duration {
-        (**self).elapsed(instant)
-    }
-
-    fn duration_between(&self, earlier: Self::Instant, later: Self::Instant) -> Duration {
-        (**self).duration_between(earlier, later)
-    }
-
-    fn sleep(&self, duration: Duration) -> Self::Sleep {
-        (**self).sleep(duration)
-    }
 }

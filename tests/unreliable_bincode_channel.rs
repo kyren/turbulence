@@ -31,8 +31,8 @@ fn test_unreliable_bincode_channel() {
             runtime.handle(),
             packet_pool.clone(),
             SETTINGS,
-            arecv,
             bsend,
+            arecv,
         ),
         512,
     ));
@@ -41,8 +41,8 @@ fn test_unreliable_bincode_channel() {
             runtime.handle(),
             packet_pool.clone(),
             SETTINGS,
-            brecv,
             asend,
+            brecv,
         ),
         512,
     ));

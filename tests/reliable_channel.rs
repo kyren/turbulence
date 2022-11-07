@@ -46,8 +46,8 @@ fn test_reliable_stream() {
         runtime.handle(),
         packet_pool.clone(),
         SmallRng::from_rng(thread_rng()).unwrap(),
-        acondrecv,
         acondsend,
+        acondrecv,
     );
 
     let (bsend, bcondrecv) = spsc::channel(2);
@@ -57,23 +57,23 @@ fn test_reliable_stream() {
         runtime.handle(),
         packet_pool.clone(),
         SmallRng::from_rng(thread_rng()).unwrap(),
-        bcondrecv,
         bcondsend,
+        bcondrecv,
     );
 
     let mut stream1 = ReliableChannel::new(
         runtime.handle(),
         packet_pool.clone(),
         SETTINGS,
-        arecv,
         bsend,
+        arecv,
     );
     let mut stream2 = ReliableChannel::new(
         runtime.handle(),
         packet_pool.clone(),
         SETTINGS,
-        brecv,
         asend,
+        brecv,
     );
 
     const END_POS: usize = 86_753;

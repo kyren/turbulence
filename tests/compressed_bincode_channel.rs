@@ -47,8 +47,8 @@ fn test_compressed_bincode_channel() {
         runtime.handle(),
         packet_pool.clone(),
         SmallRng::from_rng(thread_rng()).unwrap(),
-        acondrecv,
         acondsend,
+        acondrecv,
     );
 
     let (bsend, bcondrecv) = spsc::channel(2);
@@ -58,8 +58,8 @@ fn test_compressed_bincode_channel() {
         runtime.handle(),
         packet_pool.clone(),
         SmallRng::from_rng(thread_rng()).unwrap(),
-        bcondrecv,
         bcondsend,
+        bcondrecv,
     );
 
     let mut stream1 = CompressedBincodeChannel::new(
@@ -67,8 +67,8 @@ fn test_compressed_bincode_channel() {
             runtime.handle(),
             packet_pool.clone(),
             SETTINGS.clone(),
-            arecv,
             bsend,
+            arecv,
         ),
         1024,
     );
@@ -77,8 +77,8 @@ fn test_compressed_bincode_channel() {
             runtime.handle(),
             packet_pool.clone(),
             SETTINGS.clone(),
-            brecv,
             asend,
+            brecv,
         ),
         1024,
     );

@@ -1,6 +1,5 @@
 mod bandwidth_limiter;
 pub mod buffer;
-pub mod channel_builder;
 pub mod compressed_bincode_channel;
 mod event_watch;
 pub mod message_channels;
@@ -17,7 +16,6 @@ mod windows;
 
 pub use self::{
     buffer::{BufferPacket, BufferPacketPool, BufferPool},
-    channel_builder::ChannelBuilder,
     compressed_bincode_channel::{CompressedBincodeChannel, CompressedTypedChannel},
     message_channels::{
         MessageChannelMode, MessageChannelSettings, MessageChannels, MessageChannelsBuilder,

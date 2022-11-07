@@ -88,11 +88,11 @@ impl ReliableChannel {
         runtime: R,
         packet_pool: P,
         settings: Settings,
-        incoming: spsc::Receiver<P::Packet>,
-        outgoing: spsc::Sender<P::Packet>,
+        sender: spsc::Sender<P::Packet>,
+        receiver: spsc::Receiver<P::Packet>,
     ) -> Self
     where
-        R: Runtime + 'static,
+        R: Runtime + Clone + 'static,
         P: PacketPool + Send + 'static,
         P::Packet: Send,
     {
@@ -125,8 +125,8 @@ impl ReliableChannel {
             settings,
             runtime: runtime.clone(),
             packet_pool,
-            incoming,
-            outgoing,
+            sender,
+            receiver,
             shared: shared.clone(),
             send_window,
             recv_window,
@@ -262,8 +262,8 @@ where
     runtime: R,
     settings: Settings,
     packet_pool: P,
-    incoming: spsc::Receiver<P::Packet>,
-    outgoing: spsc::Sender<P::Packet>,
+    sender: spsc::Sender<P::Packet>,
+    receiver: spsc::Receiver<P::Packet>,
 
     shared: Arc<Shared>,
     send_window: SendWindow,
@@ -339,7 +339,7 @@ where
 
                 select! {
                     _ = { resend_timer } => WakeReason::ResendTimer,
-                    incoming_packet = self.incoming.next().fuse() => {
+                    incoming_packet = self.receiver.next().fuse() => {
                         WakeReason::IncomingPacket(incoming_packet.ok_or(Error::Disconnected)?)
                     },
                     _ = { send_available } => WakeReason::SendAvailable,
@@ -415,7 +415,7 @@ where
         );
 
         self.bandwidth_limiter.take_bytes(packet.len() as u32);
-        self.outgoing
+        self.sender
             .send(packet)
             .await
             .map_err(|_| Error::Disconnected)?;
@@ -433,7 +433,7 @@ where
             }
 
             let resend = if let Some(last_sent) = unacked.last_sent {
-                let elapsed = self.runtime.elapsed(last_sent);
+                let elapsed = self.runtime.duration_between(last_sent, self.runtime.now());
                 elapsed.as_secs_f64() > self.rtt_estimate * self.settings.rtt_resend_factor
             } else {
                 true
@@ -455,7 +455,7 @@ where
 
                 self.bandwidth_limiter.take_bytes(packet.len() as u32);
 
-                self.outgoing
+                self.sender
                     .send(packet)
                     .await
                     .map_err(|_| Error::Disconnected)?;
@@ -530,7 +530,7 @@ where
                     if let Some(last_sent) = acked_range.last_sent {
                         let rtt = self
                             .runtime
-                            .elapsed(last_sent)
+                            .duration_between(last_sent, self.runtime.now())
                             .min(self.settings.max_rtt)
                             .as_secs_f64();
                         self.rtt_estimate +=
@@ -562,7 +562,7 @@ where
 
                 // We currently do not count acknowledgement packets against the outgoing bandwidth
                 // at all.
-                self.outgoing
+                self.sender
                     .send(ack_packet)
                     .await
                     .map_err(|_| Error::Disconnected)?;

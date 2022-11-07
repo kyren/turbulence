@@ -158,10 +158,6 @@ impl Runtime for SimpleRuntimeHandle {
         self.0.time_state.lock().unwrap().time
     }
 
-    fn elapsed(&self, instant: Self::Instant) -> Duration {
-        Duration::from_millis(self.0.time_state.lock().unwrap().time - instant)
-    }
-
     fn duration_between(&self, earlier: Self::Instant, later: Self::Instant) -> Duration {
         Duration::from_millis(later - earlier)
     }
@@ -184,11 +180,11 @@ pub struct LinkCondition {
 
 pub fn condition_link<P>(
     condition: LinkCondition,
-    runtime: impl Runtime + Clone + Send + 'static,
+    runtime: impl Runtime + Clone + 'static,
     mut pool: P,
     mut rng: impl Rng + Send + 'static,
-    mut incoming: spsc::Receiver<P::Packet>,
-    mut outgoing: spsc::Sender<P::Packet>,
+    mut sender: spsc::Sender<P::Packet>,
+    mut receiver: spsc::Receiver<P::Packet>,
 ) where
     P: PacketPool + Send + 'static,
     P::Packet: Send,
@@ -198,7 +194,7 @@ pub fn condition_link<P>(
 
     runtime.spawn(async move {
         while let Some(msg) = delay_incoming.next().await {
-            if outgoing.send(msg).await.is_err() {
+            if sender.send(msg).await.is_err() {
                 break;
             }
         }
@@ -208,7 +204,7 @@ pub fn condition_link<P>(
         let runtime = runtime.clone();
         async move {
             loop {
-                match incoming.next().await {
+                match receiver.next().await {
                     Some(packet) => {
                         if rng.gen::<f64>() > condition.loss {
                             if rng.gen::<f64>() <= condition.duplicate {

@@ -28,15 +28,15 @@ fn test_unreliable_channel() {
         runtime.handle(),
         packet_pool.clone(),
         SETTINGS,
-        arecv,
         bsend,
+        arecv,
     );
     let mut stream2 = UnreliableChannel::new(
         runtime.handle(),
         packet_pool.clone(),
         SETTINGS,
-        brecv,
         asend,
+        brecv,
     );
 
     async fn send(

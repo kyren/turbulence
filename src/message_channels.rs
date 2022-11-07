@@ -16,14 +16,15 @@ use serde::{de::DeserializeOwned, Serialize};
 use thiserror::Error;
 
 use crate::{
-    channel_builder::ChannelBuilder,
     event_watch,
     packet::PacketPool,
     packet_multiplexer::{ChannelStatistics, PacketChannel, PacketMultiplexer},
     reliable_channel,
     runtime::Runtime,
     spsc::{self, TryRecvError},
-    unreliable_channel, CompressedTypedChannel, ReliableTypedChannel, UnreliableTypedChannel,
+    unreliable_channel, CompressedBincodeChannel, CompressedTypedChannel, MuxPacketPool,
+    ReliableBincodeChannel, ReliableChannel, ReliableTypedChannel, UnreliableBincodeChannel,
+    UnreliableChannel, UnreliableTypedChannel,
 };
 
 // TODO: Message channels are currently always full-duplex, because the unreliable / reliable
@@ -106,7 +107,7 @@ where
 
 impl<R, P> MessageChannelsBuilder<R, P>
 where
-    R: Runtime + 'static,
+    R: Runtime + Clone + 'static,
     P: PacketPool + Clone + Send + 'static,
     P::Packet: Send,
 {
@@ -135,16 +136,21 @@ where
     /// Build a `MessageChannels` instance that can send and receive all of the registered message
     /// types via channels on the given packet multiplexer.
     pub fn build(self, multiplexer: &mut PacketMultiplexer<P::Packet>) -> MessageChannels {
-        let mut channel_builder = ChannelBuilder::new(self.runtime, self.pool);
+        let Self {
+            runtime,
+            pool,
+            register_fns,
+            ..
+        } = self;
         let mut channels_map = ChannelsMap::default();
-        let mut tasks: FuturesUnordered<_> = self
-            .register_fns
+        let mut tasks: FuturesUnordered<_> = register_fns
             .into_iter()
             .map(|(_, (type_name, settings, register_fn))| {
                 register_fn(
                     settings,
+                    runtime.clone(),
+                    pool.clone(),
                     multiplexer,
-                    &mut channel_builder,
                     &mut channels_map,
                 )
                 .map_err(move |error| ChannelTaskError { type_name, error })
@@ -162,7 +168,7 @@ where
             }
         }
         .remote_handle();
-        channel_builder.runtime.spawn(remote);
+        runtime.spawn(remote);
 
         MessageChannels {
             disconnected: false,
@@ -396,8 +402,9 @@ impl MessageChannels {
 type ChannelTask = BoxFuture<'static, Result<(), TaskError>>;
 type RegisterFn<R, P> = fn(
     MessageChannelSettings,
+    R,
+    P,
     &mut PacketMultiplexer<<P as PacketPool>::Packet>,
-    &mut ChannelBuilder<R, P>,
     &mut ChannelsMap,
 ) -> ChannelTask;
 
@@ -445,102 +452,92 @@ impl ChannelsMap {
 
 fn register_message_type<R, P, M>(
     settings: MessageChannelSettings,
+    runtime: R,
+    packet_pool: P,
     multiplexer: &mut PacketMultiplexer<P::Packet>,
-    builder: &mut ChannelBuilder<R, P>,
     channels_map: &mut ChannelsMap,
 ) -> ChannelTask
 where
-    R: Runtime + 'static,
+    R: Runtime + Clone + 'static,
     P: PacketPool + Clone + Send + 'static,
     P::Packet: Send,
     M: ChannelMessage,
 {
-    let (incoming_message_sender, incoming_message_receiver) =
-        spsc::channel::<M>(settings.message_buffer_size);
-    let (outgoing_message_sender, outgoing_message_receiver) =
-        spsc::channel::<M>(settings.message_buffer_size);
+    let (incoming_sender, incoming_receiver) = spsc::channel::<M>(settings.message_buffer_size);
+    let (outgoing_sender, outgoing_receiver) = spsc::channel::<M>(settings.message_buffer_size);
 
     let (flush_sender, flush_receiver) = event_watch::channel();
 
-    let (channel_task, statistics) = match settings.channel_mode {
+    let (channel_sender, channel_receiver, statistics) = multiplexer
+        .open_channel(settings.channel, settings.packet_buffer_size)
+        .expect("duplicate packet channel");
+
+    let packet_pool = MuxPacketPool::new(packet_pool);
+
+    let channel_task = match settings.channel_mode {
         MessageChannelMode::Unreliable {
             settings: unreliable_settings,
             max_message_len,
-        } => {
-            let (channel, statistics) = builder
-                .open_unreliable_typed_channel(
-                    multiplexer,
-                    settings.channel,
-                    settings.packet_buffer_size,
+        } => channel_task(
+            UnreliableTypedChannel::new(UnreliableBincodeChannel::new(
+                UnreliableChannel::new(
+                    runtime,
+                    packet_pool,
                     unreliable_settings,
-                    max_message_len,
-                )
-                .expect("duplicate packet channel");
-            (
-                channel_task(
-                    channel,
-                    incoming_message_sender,
-                    outgoing_message_receiver,
-                    flush_receiver,
-                )
-                .boxed(),
-                statistics,
-            )
-        }
+                    channel_sender,
+                    channel_receiver,
+                ),
+                max_message_len,
+            )),
+            incoming_sender,
+            outgoing_receiver,
+            flush_receiver,
+        )
+        .boxed(),
         MessageChannelMode::Reliable {
             settings: reliable_settings,
             max_message_len,
-        } => {
-            let (channel, statistics) = builder
-                .open_reliable_typed_channel(
-                    multiplexer,
-                    settings.channel,
-                    settings.packet_buffer_size,
+        } => channel_task(
+            ReliableTypedChannel::new(ReliableBincodeChannel::new(
+                ReliableChannel::new(
+                    runtime,
+                    packet_pool,
                     reliable_settings,
-                    max_message_len,
-                )
-                .expect("duplicate packet channel");
-            (
-                channel_task(
-                    channel,
-                    incoming_message_sender,
-                    outgoing_message_receiver,
-                    flush_receiver,
-                )
-                .boxed(),
-                statistics,
-            )
-        }
+                    channel_sender,
+                    channel_receiver,
+                ),
+                max_message_len,
+            )),
+            incoming_sender,
+            outgoing_receiver,
+            flush_receiver,
+        )
+        .boxed(),
         MessageChannelMode::Compressed {
             settings: reliable_settings,
             max_chunk_len,
-        } => {
-            let (channel, statistics) = builder
-                .open_compressed_typed_channel(
-                    multiplexer,
-                    settings.channel,
-                    settings.packet_buffer_size,
+        } => channel_task(
+            CompressedTypedChannel::new(CompressedBincodeChannel::new(
+                ReliableChannel::new(
+                    runtime,
+                    packet_pool,
                     reliable_settings,
-                    max_chunk_len,
-                )
-                .expect("duplicate packet channel");
-            (
-                channel_task(
-                    channel,
-                    incoming_message_sender,
-                    outgoing_message_receiver,
-                    flush_receiver,
-                )
-                .boxed(),
-                statistics,
-            )
-        }
+                    channel_sender,
+                    channel_receiver,
+                ),
+                max_chunk_len,
+            )),
+            incoming_sender,
+            outgoing_receiver,
+            flush_receiver,
+        )
+        .boxed(),
     };
 
     channels_map.insert(ChannelSet::<M> {
-        outgoing_sender: outgoing_message_sender,
+        outgoing_sender,
         flush_sender,
-        incoming_receiver: incoming_message_receiver,
+        incoming_receiver,
         statistics,
     });
 

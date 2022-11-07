@@ -61,8 +61,8 @@ where
 {
     packet_pool: P,
     bandwidth_limiter: BandwidthLimiter<R>,
-    incoming_packets: spsc::Receiver<P::Packet>,
-    outgoing_packets: spsc::Sender<P::Packet>,
+    sender: spsc::Sender<P::Packet>,
+    receiver: spsc::Receiver<P::Packet>,
     out_packet: P::Packet,
     in_packet: Option<(P::Packet, usize)>,
     delay_until_available: Pin<Box<Option<R::Sleep>>>,
@@ -77,8 +77,8 @@ where
         runtime: R,
         mut packet_pool: P,
         settings: Settings,
-        incoming: spsc::Receiver<P::Packet>,
-        outgoing: spsc::Sender<P::Packet>,
+        sender: spsc::Sender<P::Packet>,
+        receiver: spsc::Receiver<P::Packet>,
     ) -> Self {
         let out_packet = packet_pool.acquire();
         UnreliableChannel {
@@ -88,8 +88,8 @@ where
                 settings.bandwidth,
                 settings.burst_bandwidth,
             ),
-            incoming_packets: incoming,
-            outgoing_packets: outgoing,
+            receiver,
+            sender,
             out_packet,
             in_packet: None,
             delay_until_available: Box::pin(None),
@@ -170,17 +170,15 @@ where
             self.delay_until_available.set(None);
         }
 
-        ready!(self.outgoing_packets.poll_ready_unpin(cx)).map_err(|_| Disconnected)?;
+        ready!(self.sender.poll_ready_unpin(cx)).map_err(|_| Disconnected)?;
 
         let out_packet = mem::replace(&mut self.out_packet, self.packet_pool.acquire());
         self.bandwidth_limiter.take_bytes(out_packet.len() as u32);
-        self.outgoing_packets
+        self.sender
             .start_send_unpin(out_packet)
             .map_err(|_| Disconnected)?;
 
-        self.outgoing_packets
-            .poll_flush_unpin(cx)
-            .map_err(|_| Disconnected)
+        self.sender.poll_flush_unpin(cx).map_err(|_| Disconnected)
     }
 
     pub fn poll_recv(&mut self, cx: &mut Context) -> Poll<Result<&[u8], RecvError>> {
@@ -196,7 +194,7 @@ where
         }
 
         if self.in_packet.is_none() {
-            let packet = ready!(self.incoming_packets.poll_next_unpin(cx)).ok_or(Disconnected)?;
+            let packet = ready!(self.receiver.poll_next_unpin(cx)).ok_or(Disconnected)?;
             self.in_packet = Some((packet, 0));
         }
 
