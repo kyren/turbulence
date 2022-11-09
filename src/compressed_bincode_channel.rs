@@ -120,6 +120,14 @@ impl CompressedBincodeChannel {
         future::poll_fn(|cx| self.poll_flush(cx)).await
     }
 
+    pub fn try_flush(&mut self) -> Result<bool, reliable_channel::Error> {
+        match self.poll_flush(&mut Context::from_waker(task::noop_waker_ref())) {
+            Poll::Pending => Ok(false),
+            Poll::Ready(Ok(())) => Ok(true),
+            Poll::Ready(Err(err)) => Err(err),
+        }
+    }
+
     /// Receive a message.
     ///
     /// This method is cancel safe, it will never partially receive a message and will never drop a
@@ -292,6 +300,10 @@ impl<T> CompressedTypedChannel<T> {
 
     pub async fn flush(&mut self) -> Result<(), reliable_channel::Error> {
         self.channel.flush().await
+    }
+
+    pub fn try_flush(&mut self) -> Result<bool, reliable_channel::Error> {
+        self.channel.try_flush()
     }
 
     pub fn poll_flush(&mut self, cx: &mut Context) -> Poll<Result<(), reliable_channel::Error>> {

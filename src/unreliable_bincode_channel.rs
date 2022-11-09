@@ -111,6 +111,14 @@ where
         future::poll_fn(|cx| self.poll_flush(cx)).await
     }
 
+    pub fn try_flush(&mut self) -> Result<bool, unreliable_channel::SendError> {
+        match self.poll_flush(&mut Context::from_waker(task::noop_waker_ref())) {
+            Poll::Pending => Ok(false),
+            Poll::Ready(Ok(())) => Ok(true),
+            Poll::Ready(Err(err)) => Err(err),
+        }
+    }
+
     /// Receive a deserializable message type as soon as the next message is available.
     ///
     /// This method is cancel safe, it will never partially read a message or drop received
@@ -218,6 +226,10 @@ where
 
     pub async fn flush(&mut self) -> Result<(), unreliable_channel::SendError> {
         self.channel.flush().await
+    }
+
+    pub fn try_flush(&mut self) -> Result<bool, unreliable_channel::SendError> {
+        self.channel.try_flush()
     }
 
     pub fn poll_flush(

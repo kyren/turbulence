@@ -132,6 +132,14 @@ where
         future::poll_fn(|cx| self.poll_flush(cx)).await
     }
 
+    pub fn try_flush(&mut self) -> Result<bool, Disconnected> {
+        match self.poll_flush(&mut Context::from_waker(task::noop_waker_ref())) {
+            Poll::Pending => Ok(false),
+            Poll::Ready(Ok(())) => Ok(true),
+            Poll::Ready(Err(err)) => Err(err),
+        }
+    }
+
     /// Receive a message into the provide buffer.
     ///
     /// If the received message fits into the provided buffer, this will return `Ok(message_len)`,
