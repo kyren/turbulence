@@ -522,11 +522,11 @@ trait MessageBincodeChannel<M: ChannelMessage> {
     fn poll_flush(&mut self, cx: &mut Context) -> Poll<Result<(), TaskError>>;
 }
 
-impl<M, R, P> MessageBincodeChannel<M> for UnreliableTypedChannel<M, R, P>
+impl<R, P, M> MessageBincodeChannel<M> for UnreliableTypedChannel<R, P, M>
 where
-    M: ChannelMessage,
     R: Runtime,
     P: PacketPool,
+    M: ChannelMessage,
 {
     fn poll_recv(&mut self, cx: &mut Context) -> Poll<Result<M, TaskError>> {
         UnreliableTypedChannel::poll_recv(self, cx).map_err(|e| e.into())

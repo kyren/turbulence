@@ -156,7 +156,7 @@ where
 }
 
 /// Wrapper over an `UnreliableBincodeChannel` that only allows a single message type.
-pub struct UnreliableTypedChannel<T, R, P>
+pub struct UnreliableTypedChannel<R, P, T>
 where
     R: Runtime,
     P: PacketPool,
@@ -165,7 +165,7 @@ where
     _phantom: PhantomData<T>,
 }
 
-impl<T, R, P> From<UnreliableChannel<R, P>> for UnreliableTypedChannel<T, R, P>
+impl<R, P, T> From<UnreliableChannel<R, P>> for UnreliableTypedChannel<R, P, T>
 where
     R: Runtime,
     P: PacketPool,
@@ -175,7 +175,7 @@ where
     }
 }
 
-impl<T, R, P> UnreliableTypedChannel<T, R, P>
+impl<R, P, T> UnreliableTypedChannel<R, P, T>
 where
     R: Runtime,
     P: PacketPool,
@@ -210,11 +210,11 @@ where
     }
 }
 
-impl<T, R, P> UnreliableTypedChannel<T, R, P>
+impl<R, P, T> UnreliableTypedChannel<R, P, T>
 where
-    T: Serialize,
     R: Runtime,
     P: PacketPool,
+    T: Serialize,
 {
     pub async fn send(&mut self, msg: &T) -> Result<(), SendError> {
         self.channel.send(msg).await
@@ -225,11 +225,11 @@ where
     }
 }
 
-impl<'a, T, R, P> UnreliableTypedChannel<T, R, P>
+impl<'a, R, P, T> UnreliableTypedChannel<R, P, T>
 where
-    T: Deserialize<'a>,
     R: Runtime,
     P: PacketPool,
+    T: Deserialize<'a>,
 {
     pub async fn recv(&'a mut self) -> Result<T, RecvError> {
         self.channel.recv().await

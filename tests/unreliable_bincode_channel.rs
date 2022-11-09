@@ -50,9 +50,9 @@ fn test_unreliable_bincode_channel() {
 
     async fn send(
         stream: &mut UnreliableTypedChannel<
-            MyMsg,
             SimpleRuntimeHandle,
             BufferPacketPool<SimpleBufferPool>,
+            MyMsg,
         >,
         val: u8,
         len: u8,
@@ -72,9 +72,9 @@ fn test_unreliable_bincode_channel() {
 
     async fn recv(
         stream: &mut UnreliableTypedChannel<
-            MyMsg,
             SimpleRuntimeHandle,
             BufferPacketPool<SimpleBufferPool>,
+            MyMsg,
         >,
         val: u8,
         len: u8,
