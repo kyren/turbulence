@@ -22,9 +22,8 @@ use crate::{
     reliable_channel,
     runtime::Runtime,
     spsc::{self, TryRecvError},
-    unreliable_channel, CompressedBincodeChannel, CompressedTypedChannel, MuxPacketPool,
-    ReliableBincodeChannel, ReliableChannel, ReliableTypedChannel, UnreliableBincodeChannel,
-    UnreliableChannel, UnreliableTypedChannel,
+    unreliable_channel, CompressedTypedChannel, MuxPacketPool, ReliableChannel,
+    ReliableTypedChannel, UnreliableChannel, UnreliableTypedChannel,
 };
 
 // TODO: Message channels are currently always full-duplex, because the unreliable / reliable
@@ -44,18 +43,9 @@ pub struct MessageChannelSettings {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum MessageChannelMode {
-    Unreliable {
-        settings: unreliable_channel::Settings,
-        max_message_len: u16,
-    },
-    Reliable {
-        settings: reliable_channel::Settings,
-        max_message_len: u16,
-    },
-    Compressed {
-        settings: reliable_channel::Settings,
-        max_chunk_len: u16,
-    },
+    Unreliable(unreliable_channel::Settings),
+    Reliable(reliable_channel::Settings),
+    Compressed(reliable_channel::Settings),
 }
 
 pub trait ChannelMessage: Serialize + DeserializeOwned + Send + Sync + 'static {}
@@ -475,57 +465,39 @@ where
     let packet_pool = MuxPacketPool::new(packet_pool);
 
     let channel_task = match settings.channel_mode {
-        MessageChannelMode::Unreliable {
-            settings: unreliable_settings,
-            max_message_len,
-        } => channel_task(
-            UnreliableTypedChannel::new(UnreliableBincodeChannel::new(
-                UnreliableChannel::new(
-                    runtime,
-                    packet_pool,
-                    unreliable_settings,
-                    channel_sender,
-                    channel_receiver,
-                ),
-                max_message_len,
+        MessageChannelMode::Unreliable(unreliable_settings) => channel_task(
+            UnreliableTypedChannel::new(UnreliableChannel::new(
+                runtime,
+                packet_pool,
+                unreliable_settings,
+                channel_sender,
+                channel_receiver,
             )),
             incoming_sender,
             outgoing_receiver,
             flush_receiver,
         )
         .boxed(),
-        MessageChannelMode::Reliable {
-            settings: reliable_settings,
-            max_message_len,
-        } => channel_task(
-            ReliableTypedChannel::new(ReliableBincodeChannel::new(
-                ReliableChannel::new(
-                    runtime,
-                    packet_pool,
-                    reliable_settings,
-                    channel_sender,
-                    channel_receiver,
-                ),
-                max_message_len,
+        MessageChannelMode::Reliable(reliable_settings) => channel_task(
+            ReliableTypedChannel::new(ReliableChannel::new(
+                runtime,
+                packet_pool,
+                reliable_settings,
+                channel_sender,
+                channel_receiver,
             )),
             incoming_sender,
             outgoing_receiver,
             flush_receiver,
         )
         .boxed(),
-        MessageChannelMode::Compressed {
-            settings: reliable_settings,
-            max_chunk_len,
-        } => channel_task(
-            CompressedTypedChannel::new(CompressedBincodeChannel::new(
-                ReliableChannel::new(
-                    runtime,
-                    packet_pool,
-                    reliable_settings,
-                    channel_sender,
-                    channel_receiver,
-                ),
-                max_chunk_len,
+        MessageChannelMode::Compressed(reliable_settings) => channel_task(
+            CompressedTypedChannel::new(ReliableChannel::new(
+                runtime,
+                packet_pool,
+                reliable_settings,
+                channel_sender,
+                channel_receiver,
             )),
             incoming_sender,
             outgoing_receiver,

@@ -11,7 +11,7 @@ use thiserror::Error;
 use crate::{
     packet::PacketPool,
     runtime::Runtime,
-    unreliable_channel::{self, UnreliableChannel, MAX_MESSAGE_LEN},
+    unreliable_channel::{self, UnreliableChannel},
 };
 
 #[derive(Debug, Error)]
@@ -43,8 +43,17 @@ where
     P: PacketPool,
 {
     channel: UnreliableChannel<R, P>,
-    buffer: Box<[u8]>,
-    pending_write: u16,
+    pending_write: Vec<u8>,
+}
+
+impl<R, P> From<UnreliableChannel<R, P>> for UnreliableBincodeChannel<R, P>
+where
+    R: Runtime,
+    P: PacketPool,
+{
+    fn from(channel: UnreliableChannel<R, P>) -> Self {
+        Self::new(channel)
+    }
 }
 
 impl<R, P> UnreliableBincodeChannel<R, P>
@@ -52,17 +61,22 @@ where
     R: Runtime,
     P: PacketPool,
 {
-    /// Create a new `UnreliableBincodeChannel` with the given max message size.
-    ///
-    /// The maximum message size is always limited by the underlying `UnreliableChannel` maximum
-    /// message size regardless of the `max_message_len` setting, but this can be used to restrict
-    /// the intermediate buffer used to serialize messages.
-    pub fn new(channel: UnreliableChannel<R, P>, max_message_len: u16) -> Self {
+    pub fn new(channel: UnreliableChannel<R, P>) -> Self {
         UnreliableBincodeChannel {
             channel,
-            buffer: vec![0; max_message_len.min(MAX_MESSAGE_LEN) as usize].into_boxed_slice(),
-            pending_write: 0,
+            pending_write: Vec::new(),
         }
+    }
+
+    pub fn into_inner(self) -> UnreliableChannel<R, P> {
+        self.channel
+    }
+
+    /// Maximum allowed message length based on the packet capacity of the provided `PacketPool`.
+    ///
+    /// Will never be greater than `MAX_PACKET_LEN - 2`.
+    pub fn max_message_len(&self) -> u16 {
+        self.channel.max_message_len()
     }
 
     /// Write the given serializable message type to the channel.
@@ -102,24 +116,18 @@ where
         &mut self,
         cx: &mut Context,
     ) -> Poll<Result<(), unreliable_channel::SendError>> {
-        if self.pending_write != 0 {
-            ready!(self
-                .channel
-                .poll_send(cx, &self.buffer[0..self.pending_write as usize]))?;
-            self.pending_write = 0;
+        if !self.pending_write.is_empty() {
+            ready!(self.channel.poll_send(cx, &self.pending_write))?;
+            self.pending_write.clear();
         }
         Poll::Ready(Ok(()))
     }
 
     pub fn start_send<T: Serialize>(&mut self, msg: &T) -> Result<(), bincode::Error> {
-        assert!(self.pending_write == 0);
+        assert!(self.pending_write.is_empty());
 
         let bincode_config = self.bincode_config();
-        let mut w = &mut self.buffer[..];
-        bincode_config.serialize_into(&mut w, msg)?;
-
-        let remaining = w.len();
-        self.pending_write = (self.buffer.len() - remaining) as u16;
+        bincode_config.serialize_into(&mut self.pending_write, msg)?;
 
         Ok(())
     }
@@ -143,7 +151,7 @@ where
     }
 
     fn bincode_config(&self) -> impl bincode::Options + Copy {
-        bincode::options().with_limit(self.buffer.len() as u64)
+        bincode::options().with_limit(self.max_message_len() as u64)
     }
 }
 
@@ -157,16 +165,30 @@ where
     _phantom: PhantomData<T>,
 }
 
+impl<T, R, P> From<UnreliableChannel<R, P>> for UnreliableTypedChannel<T, R, P>
+where
+    R: Runtime,
+    P: PacketPool,
+{
+    fn from(channel: UnreliableChannel<R, P>) -> Self {
+        Self::new(channel)
+    }
+}
+
 impl<T, R, P> UnreliableTypedChannel<T, R, P>
 where
     R: Runtime,
     P: PacketPool,
 {
-    pub fn new(channel: UnreliableBincodeChannel<R, P>) -> Self {
-        UnreliableTypedChannel {
-            channel,
+    pub fn new(channel: UnreliableChannel<R, P>) -> Self {
+        Self {
+            channel: UnreliableBincodeChannel::new(channel),
             _phantom: PhantomData,
         }
+    }
+
+    pub fn into_inner(self) -> UnreliableChannel<R, P> {
+        self.channel.into_inner()
     }
 
     pub async fn flush(&mut self) -> Result<(), unreliable_channel::SendError> {

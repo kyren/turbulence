@@ -12,6 +12,9 @@ use thiserror::Error;
 
 use crate::reliable_channel::{self, ReliableChannel};
 
+/// The maximum serialized length of a `ReliableBincodeChannel` message.
+pub const MAX_MESSAGE_LEN: u16 = u16::MAX;
+
 #[derive(Debug, Error)]
 pub enum SendError {
     /// Fatal internal channel error.
@@ -27,10 +30,6 @@ pub enum RecvError {
     /// Fatal internal channel error.
     #[error("reliable channel error: {0}")]
     ReliableChannelError(#[from] reliable_channel::Error),
-    /// Fatal error, reading the next message would exceed the maximum buffer length, no progress
-    /// can be made.
-    #[error("received message exceeds the configured max message length")]
-    PrefixTooLarge,
     /// Non-fatal error, message is skipped.
     #[error("bincode serialization error: {0}")]
     BincodeError(#[from] bincode::Error),
@@ -43,30 +42,34 @@ pub enum RecvError {
 /// length, but this maximum size can be larger than the size of an individual packet.
 pub struct ReliableBincodeChannel {
     channel: ReliableChannel,
-    max_message_len: u16,
 
-    write_buffer: Box<[u8]>,
+    write_buffer: Vec<u8>,
     write_pos: usize,
-    write_end: usize,
 
-    read_buffer: Box<[u8]>,
+    read_buffer: Vec<u8>,
     read_pos: usize,
-    read_end: usize,
+}
+
+impl From<ReliableChannel> for ReliableBincodeChannel {
+    fn from(channel: ReliableChannel) -> Self {
+        Self::new(channel)
+    }
 }
 
 impl ReliableBincodeChannel {
     /// Create a new `ReliableBincodeChannel` with a maximum message size of `max_message_len`.
-    pub fn new(channel: ReliableChannel, max_message_len: u16) -> Self {
+    pub fn new(channel: ReliableChannel) -> Self {
         ReliableBincodeChannel {
             channel,
-            max_message_len,
-            write_buffer: vec![0; 2 + max_message_len as usize].into_boxed_slice(),
+            write_buffer: Vec::new(),
             write_pos: 0,
-            write_end: 0,
-            read_buffer: vec![0; 2 + max_message_len as usize].into_boxed_slice(),
+            read_buffer: Vec::new(),
             read_pos: 0,
-            read_end: 0,
         }
+    }
+
+    pub fn into_inner(self) -> ReliableChannel {
+        self.channel
     }
 
     /// Write the given message to the reliable channel.
@@ -103,29 +106,29 @@ impl ReliableBincodeChannel {
         &mut self,
         cx: &mut Context,
     ) -> Poll<Result<(), reliable_channel::Error>> {
-        while self.write_pos < self.write_end {
+        while !self.write_buffer.is_empty() {
             let len = ready!(self
                 .channel
-                .poll_write(cx, &self.write_buffer[self.write_pos..self.write_end]))?;
+                .poll_write(cx, &self.write_buffer[self.write_pos..]))?;
             self.write_pos += len;
+            if self.write_pos == self.write_buffer.len() {
+                self.write_pos = 0;
+                self.write_buffer.clear();
+            }
         }
         Poll::Ready(Ok(()))
     }
 
     pub fn start_send<T: Serialize>(&mut self, msg: &T) -> Result<(), bincode::Error> {
-        assert!(self.write_pos == self.write_end);
-
-        self.write_pos = 0;
-        self.write_end = 0;
-
+        assert!(self.write_buffer.is_empty());
+        self.write_buffer.resize(2, 0);
         let bincode_config = self.bincode_config();
-        let mut w = &mut self.write_buffer[2..];
-        bincode_config.serialize_into(&mut w, msg)?;
-
-        let remaining = w.len();
-        self.write_end = self.write_buffer.len() - remaining;
-        LittleEndian::write_u16(&mut self.write_buffer[0..2], (self.write_end - 2) as u16);
-
+        bincode_config.serialize_into(&mut self.write_buffer, msg)?;
+        let message_len = self.write_buffer.len() - 2;
+        LittleEndian::write_u16(
+            &mut self.write_buffer[0..2],
+            message_len.try_into().unwrap(),
+        );
         Ok(())
     }
 
@@ -144,16 +147,13 @@ impl ReliableBincodeChannel {
     }
 
     fn poll_recv_ready(&mut self, cx: &mut Context) -> Poll<Result<(), RecvError>> {
-        if self.read_end < 2 {
-            self.read_end = 2;
+        if self.read_pos < 2 {
+            self.read_buffer.resize(2, 0);
+            ready!(self.poll_finish_read(cx))?;
         }
-        ready!(self.poll_finish_read(cx))?;
 
         let message_len = LittleEndian::read_u16(&self.read_buffer[0..2]);
-        if message_len > self.max_message_len {
-            return Poll::Ready(Err(RecvError::PrefixTooLarge));
-        }
-        self.read_end = message_len as usize + 2;
+        self.read_buffer.resize(message_len as usize + 2, 0);
         ready!(self.poll_finish_read(cx))?;
 
         Poll::Ready(Ok(()))
@@ -161,24 +161,23 @@ impl ReliableBincodeChannel {
 
     fn recv_next<'a, T: Deserialize<'a>>(&'a mut self) -> Result<T, RecvError> {
         let bincode_config = self.bincode_config();
-        let res = bincode_config.deserialize(&self.read_buffer[2..self.read_end]);
+        let res = bincode_config.deserialize(&self.read_buffer[2..]);
         self.read_pos = 0;
-        self.read_end = 0;
         Ok(res?)
     }
 
     fn poll_finish_read(&mut self, cx: &mut Context) -> Poll<Result<(), reliable_channel::Error>> {
-        while self.read_pos < self.read_end {
+        while self.read_pos < self.read_buffer.len() {
             let len = ready!(self
                 .channel
-                .poll_read(cx, &mut self.read_buffer[self.read_pos..self.read_end]))?;
+                .poll_read(cx, &mut self.read_buffer[self.read_pos..]))?;
             self.read_pos += len;
         }
         Poll::Ready(Ok(()))
     }
 
     fn bincode_config(&self) -> impl bincode::Options + Copy {
-        bincode::options().with_limit(self.max_message_len as u64)
+        bincode::options().with_limit(MAX_MESSAGE_LEN as u64)
     }
 }
 
@@ -188,12 +187,22 @@ pub struct ReliableTypedChannel<T> {
     _phantom: PhantomData<T>,
 }
 
+impl<T> From<ReliableChannel> for ReliableTypedChannel<T> {
+    fn from(channel: ReliableChannel) -> Self {
+        Self::new(channel)
+    }
+}
+
 impl<T> ReliableTypedChannel<T> {
-    pub fn new(channel: ReliableBincodeChannel) -> Self {
+    pub fn new(channel: ReliableChannel) -> Self {
         ReliableTypedChannel {
-            channel,
+            channel: ReliableBincodeChannel::new(channel),
             _phantom: PhantomData,
         }
+    }
+
+    pub fn into_inner(self) -> ReliableChannel {
+        self.channel.into_inner()
     }
 
     pub async fn flush(&mut self) -> Result<(), reliable_channel::Error> {

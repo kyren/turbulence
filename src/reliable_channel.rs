@@ -238,6 +238,20 @@ impl ReliableChannel {
             }
         }
     }
+
+    /// The amount of space currently available for writing without blocking.
+    pub fn write_available(&self) -> usize {
+        self.send_window_writer.write_available() as usize
+    }
+
+    /// Attempt to write data without blocking or registering wakeups.
+    pub fn try_write(&mut self, data: &mut [u8]) -> Result<usize, Error> {
+        if self.task.is_terminated() {
+            Err(Error::Shutdown)
+        } else {
+            Ok(self.send_window_writer.write(data) as usize)
+        }
+    }
 }
 
 #[derive(Default)]
@@ -393,8 +407,8 @@ where
             return Ok(());
         }
 
+        let send_amt = send_amt.min((self.packet_pool.capacity() - 6) as u32);
         let mut packet = self.packet_pool.acquire();
-        let send_amt = send_amt.min((packet.capacity() - 6) as u32);
 
         packet.resize(6 + send_amt as usize, 0);
 

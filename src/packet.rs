@@ -8,9 +8,6 @@ pub const MAX_PACKET_LEN: u16 = 32768;
 
 /// A trait for packet buffers used by `turbulence`.
 pub trait Packet: Deref<Target = [u8]> + DerefMut {
-    /// Static capacity of this packet
-    fn capacity(&self) -> usize;
-
     /// Resizes the packet to the given length, which must be at most the static capacity.
     fn resize(&mut self, len: usize, val: u8);
 
@@ -29,14 +26,6 @@ pub trait Packet: Deref<Target = [u8]> + DerefMut {
     fn clear(&mut self) {
         self.resize(0, 0);
     }
-
-    fn as_slice(&self) -> &[u8] {
-        self.deref()
-    }
-
-    fn as_mut_slice(&mut self) -> &mut [u8] {
-        self.deref_mut()
-    }
 }
 
 /// Trait for packet allocation and pooling.
@@ -47,6 +36,9 @@ pub trait Packet: Deref<Target = [u8]> + DerefMut {
 /// whatever the underlying transport is, up to `MAX_PACKET_LEN` in size.
 pub trait PacketPool {
     type Packet: Packet;
+
+    /// Static maximum capacity packets returned by this pool.
+    fn capacity(&self) -> usize;
 
     fn acquire(&mut self) -> Self::Packet;
 }

@@ -30,12 +30,20 @@ impl<P> Packet for MuxPacket<P>
 where
     P: Packet,
 {
-    fn capacity(&self) -> usize {
-        self.0.capacity() - 1
-    }
-
     fn resize(&mut self, len: usize, val: u8) {
         self.0.resize(len + 1, val);
+    }
+
+    fn extend(&mut self, other: &[u8]) {
+        self.0.extend(other);
+    }
+
+    fn truncate(&mut self, len: usize) {
+        self.0.truncate(len + 1);
+    }
+
+    fn clear(&mut self) {
+        self.0.resize(1, 0);
     }
 }
 
@@ -73,6 +81,10 @@ where
     P: PacketPool,
 {
     type Packet = MuxPacket<P::Packet>;
+
+    fn capacity(&self) -> usize {
+        self.0.capacity() - 1
+    }
 
     fn acquire(&mut self) -> MuxPacket<P::Packet> {
         let mut packet = self.0.acquire();

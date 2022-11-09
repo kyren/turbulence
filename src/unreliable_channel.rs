@@ -17,10 +17,6 @@ use crate::{
     spsc,
 };
 
-/// The maximum possible message length of an `UnreliableChannel` message for the largest possible
-/// packet, based on the `MAX_PACKET_LEN`.
-pub const MAX_MESSAGE_LEN: u16 = MAX_PACKET_LEN - 2;
-
 #[derive(Debug, Error)]
 /// Fatal error due to channel disconnection.
 #[error("incoming or outgoing packet channel has been disconnected")]
@@ -96,6 +92,13 @@ where
         }
     }
 
+    /// Maximum allowed message length based on the packet capacity of the provided `PacketPool`.
+    ///
+    /// Will never be greater than `MAX_PACKET_LEN - 2`.
+    pub fn max_message_len(&self) -> u16 {
+        self.packet_pool.capacity().min(MAX_PACKET_LEN as usize) as u16 - 2
+    }
+
     /// Write the given message to the channel.
     ///
     /// Messages are coalesced into larger packets before being sent, so in order to guarantee that
@@ -137,10 +140,10 @@ where
         let msg_len: u16 = msg.len().try_into().map_err(|_| SendError::TooBig)?;
 
         let start = self.out_packet.len();
-        if self.out_packet.capacity() - start < msg_len as usize + 2 {
+        if self.packet_pool.capacity() - start < msg_len as usize + 2 {
             ready!(self.poll_flush(cx))?;
 
-            if self.out_packet.capacity() < msg_len as usize + 2 {
+            if self.packet_pool.capacity() < msg_len as usize + 2 {
                 return Poll::Ready(Err(SendError::TooBig));
             }
         }

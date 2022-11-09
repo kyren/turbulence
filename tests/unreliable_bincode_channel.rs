@@ -5,7 +5,7 @@ use turbulence::{
     buffer::BufferPacketPool,
     runtime::Runtime,
     spsc,
-    unreliable_bincode_channel::{UnreliableBincodeChannel, UnreliableTypedChannel},
+    unreliable_bincode_channel::UnreliableTypedChannel,
     unreliable_channel::{Settings, UnreliableChannel},
 };
 
@@ -26,25 +26,19 @@ fn test_unreliable_bincode_channel() {
     let (asend, arecv) = spsc::channel(8);
     let (bsend, brecv) = spsc::channel(8);
 
-    let mut stream1 = UnreliableTypedChannel::new(UnreliableBincodeChannel::new(
-        UnreliableChannel::new(
-            runtime.handle(),
-            packet_pool.clone(),
-            SETTINGS,
-            bsend,
-            arecv,
-        ),
-        512,
+    let mut stream1 = UnreliableTypedChannel::new(UnreliableChannel::new(
+        runtime.handle(),
+        packet_pool.clone(),
+        SETTINGS,
+        bsend,
+        arecv,
     ));
-    let mut stream2 = UnreliableTypedChannel::new(UnreliableBincodeChannel::new(
-        UnreliableChannel::new(
-            runtime.handle(),
-            packet_pool.clone(),
-            SETTINGS,
-            asend,
-            brecv,
-        ),
-        512,
+    let mut stream2 = UnreliableTypedChannel::new(UnreliableChannel::new(
+        runtime.handle(),
+        packet_pool.clone(),
+        SETTINGS,
+        asend,
+        brecv,
     ));
 
     #[derive(Eq, PartialEq, Debug, Serialize, Deserialize)]

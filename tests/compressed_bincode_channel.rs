@@ -62,26 +62,20 @@ fn test_compressed_bincode_channel() {
         bcondrecv,
     );
 
-    let mut stream1 = CompressedBincodeChannel::new(
-        ReliableChannel::new(
-            runtime.handle(),
-            packet_pool.clone(),
-            SETTINGS.clone(),
-            bsend,
-            arecv,
-        ),
-        1024,
-    );
-    let mut stream2 = CompressedBincodeChannel::new(
-        ReliableChannel::new(
-            runtime.handle(),
-            packet_pool.clone(),
-            SETTINGS.clone(),
-            asend,
-            brecv,
-        ),
-        1024,
-    );
+    let mut stream1 = CompressedBincodeChannel::new(ReliableChannel::new(
+        runtime.handle(),
+        packet_pool.clone(),
+        SETTINGS.clone(),
+        bsend,
+        arecv,
+    ));
+    let mut stream2 = CompressedBincodeChannel::new(ReliableChannel::new(
+        runtime.handle(),
+        packet_pool.clone(),
+        SETTINGS.clone(),
+        asend,
+        brecv,
+    ));
 
     let (a_done_send, mut a_done) = oneshot::channel();
     runtime.spawn({

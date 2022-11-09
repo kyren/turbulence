@@ -75,6 +75,11 @@ impl SendWindowWriter {
         self.writer.advance(len);
         len as u32
     }
+
+    /// The amount of data available to be written
+    pub fn write_available(&self) -> u32 {
+        self.writer.buffer().write_available() as u32
+    }
 }
 
 /// Coaelesces and buffers outgoing stream data up to a configured window capacity and keeps it

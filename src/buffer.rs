@@ -2,10 +2,12 @@ use std::ops::{Deref, DerefMut};
 
 pub use crate::packet::{Packet, PacketPool};
 
-/// A trait for implementing `PacketPool` more easily using an allocator for statically sized buffers.
+/// A trait for implementing `PacketPool` more easily using an allocator for statically sized
+/// buffers.
 pub trait BufferPool {
     type Buffer: Deref<Target = [u8]> + DerefMut;
 
+    fn capacity(&self) -> usize;
     fn acquire(&mut self) -> Self::Buffer;
 }
 
@@ -21,6 +23,10 @@ impl<B> BufferPacketPool<B> {
 
 impl<B: BufferPool> PacketPool for BufferPacketPool<B> {
     type Packet = BufferPacket<B::Buffer>;
+
+    fn capacity(&self) -> usize {
+        self.0.capacity()
+    }
 
     fn acquire(&mut self) -> Self::Packet {
         BufferPacket {
@@ -40,10 +46,6 @@ impl<B> Packet for BufferPacket<B>
 where
     B: Deref<Target = [u8]> + DerefMut,
 {
-    fn capacity(&self) -> usize {
-        self.buffer.len()
-    }
-
     fn resize(&mut self, len: usize, val: u8) {
         assert!(len <= self.buffer.len());
         for i in self.len..len {

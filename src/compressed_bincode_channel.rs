@@ -14,6 +14,11 @@ use thiserror::Error;
 
 use crate::reliable_channel::{self, ReliableChannel};
 
+/// The maximum serialized length of a `CompressedBincodeChannel` message. This also serves as
+/// the maximum size of a compressed chunk of messages, but it is guaranteed that any message <=
+/// `MAX_MESSAGE_LEN` can be sent, even if it cannot be compressed.
+pub const MAX_MESSAGE_LEN: u16 = u16::MAX;
+
 #[derive(Debug, Error)]
 pub enum SendError {
     /// Fatal internal channel error.
@@ -29,14 +34,10 @@ pub enum RecvError {
     /// Fatal internal channel error.
     #[error("reliable channel error error: {0}")]
     ReliableChannelError(#[from] reliable_channel::Error),
-    /// Fatal error, reading the next chunk would exceed the maximum buffer length, no progress can
-    /// be made.
-    #[error("received chunk exceeds the configured max chunk length")]
-    ChunkTooLarge,
     /// Fatal error, indicates corruption or protocol mismatch.
     #[error("Snappy serialization error: {0}")]
     SnapError(#[from] snap::Error),
-    /// Fatal error, it desynchronizes the stream, individual messages are not externally length
+    /// Fatal error, stream becomes desynchronized, individual serialized types are not length
     /// prefixed.
     #[error("bincode serialization error: {0}")]
     BincodeError(#[from] bincode::Error),
@@ -53,7 +54,6 @@ pub enum RecvError {
 /// individual message.
 pub struct CompressedBincodeChannel {
     channel: ReliableChannel,
-    max_chunk_len: u16,
 
     send_chunk: Vec<u8>,
 
@@ -70,15 +70,16 @@ pub struct CompressedBincodeChannel {
     decoder: SnapDecoder,
 }
 
+impl From<ReliableChannel> for CompressedBincodeChannel {
+    fn from(channel: ReliableChannel) -> Self {
+        Self::new(channel)
+    }
+}
+
 impl CompressedBincodeChannel {
-    /// The `max_chunk_len` parameter describes the maximum buffer size of a combined message block
-    /// before it is automatically sent.
-    ///
-    /// An individual message may be no more than `max_chunk_len` in length.
-    pub fn new(channel: ReliableChannel, max_chunk_len: u16) -> Self {
+    pub fn new(channel: ReliableChannel) -> Self {
         CompressedBincodeChannel {
             channel,
-            max_chunk_len,
             send_chunk: Vec::new(),
             write_buffer: Vec::new(),
             write_pos: 0,
@@ -89,6 +90,10 @@ impl CompressedBincodeChannel {
             encoder: SnapEncoder::new(),
             decoder: SnapDecoder::new(),
         }
+    }
+
+    pub fn into_inner(self) -> ReliableChannel {
+        self.channel
     }
 
     /// Send the given message.
@@ -123,7 +128,7 @@ impl CompressedBincodeChannel {
         let bincode_config = self.bincode_config();
 
         let serialized_len = bincode_config.serialized_size(msg)?;
-        if self.send_chunk.len() as u64 + serialized_len > self.max_chunk_len as u64 {
+        if self.send_chunk.len() as u64 + serialized_len > MAX_MESSAGE_LEN as u64 {
             ready!(self.poll_write_send_chunk(cx))?;
         }
 
@@ -160,17 +165,11 @@ impl CompressedBincodeChannel {
 
             let compressed = self.read_buffer[0] != 0;
             let chunk_len = LittleEndian::read_u16(&self.read_buffer[1..3]);
-            if chunk_len > self.max_chunk_len {
-                return Poll::Ready(Err(RecvError::ChunkTooLarge));
-            }
             self.read_buffer.resize(chunk_len as usize + 3, 0);
             ready!(self.poll_finish_read(cx))?;
 
             if compressed {
                 let decompressed_len = decompress_len(&self.read_buffer[3..])?;
-                if decompressed_len > self.max_chunk_len as usize {
-                    return Poll::Ready(Err(RecvError::ChunkTooLarge));
-                }
                 self.recv_chunk.resize(decompressed_len, 0);
                 self.decoder
                     .decompress(&self.read_buffer[3..], &mut self.recv_chunk)?;
@@ -201,7 +200,8 @@ impl CompressedBincodeChannel {
                 .expect("unexpected snap encoder error");
             self.write_buffer.truncate(compressed_len + 3);
             if compressed_len >= self.send_chunk.len() {
-                // If our compressed size is worse than our uncompressed size, write the original chunk
+                // If our compressed size is worse than our uncompressed size, write the original
+                // chunk.
                 self.write_buffer.truncate(self.send_chunk.len() + 3);
                 self.write_buffer[3..].copy_from_slice(&self.send_chunk);
                 // An initial 0 means uncompressed
@@ -246,7 +246,7 @@ impl CompressedBincodeChannel {
     }
 
     fn bincode_config(&self) -> impl bincode::Options + Copy {
-        bincode::options().with_limit(self.max_chunk_len as u64)
+        bincode::options().with_limit(MAX_MESSAGE_LEN as u64)
     }
 }
 
@@ -256,12 +256,22 @@ pub struct CompressedTypedChannel<T> {
     _phantom: PhantomData<T>,
 }
 
+impl<T> From<ReliableChannel> for CompressedTypedChannel<T> {
+    fn from(channel: ReliableChannel) -> Self {
+        Self::new(channel)
+    }
+}
+
 impl<T> CompressedTypedChannel<T> {
-    pub fn new(channel: CompressedBincodeChannel) -> Self {
+    pub fn new(channel: ReliableChannel) -> Self {
         CompressedTypedChannel {
-            channel,
+            channel: CompressedBincodeChannel::new(channel),
             _phantom: PhantomData,
         }
+    }
+
+    pub fn into_inner(self) -> ReliableChannel {
+        self.channel.into_inner()
     }
 
     pub async fn flush(&mut self) -> Result<(), reliable_channel::Error> {
