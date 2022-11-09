@@ -7,7 +7,7 @@ use std::{
 };
 
 use byteorder::{ByteOrder, LittleEndian};
-use futures::{future, ready, SinkExt, StreamExt};
+use futures::{future, ready, task, SinkExt, StreamExt};
 use thiserror::Error;
 
 use crate::{
@@ -114,6 +114,14 @@ where
         future::poll_fn(|cx| self.poll_send(cx, msg)).await
     }
 
+    pub fn try_send(&mut self, msg: &[u8]) -> Result<bool, SendError> {
+        match self.poll_send(&mut Context::from_waker(task::noop_waker_ref()), msg) {
+            Poll::Pending => Ok(false),
+            Poll::Ready(Ok(())) => Ok(true),
+            Poll::Ready(Err(err)) => Err(err),
+        }
+    }
+
     /// Finish sending any unsent coalesced packets.
     ///
     /// This *must* be called to guarantee that any sent messages are actually sent to the outgoing
@@ -131,9 +139,17 @@ where
     ///
     /// This method is cancel safe, it will never partially read a message or drop received
     /// messages.
-    pub async fn recv<'a>(&'a mut self) -> Result<&'a [u8], RecvError> {
+    pub async fn recv(&mut self) -> Result<&[u8], RecvError> {
         future::poll_fn(|cx| self.poll_recv_ready(cx)).await?;
         self.recv_next()
+    }
+
+    pub fn try_recv(&mut self) -> Result<Option<&[u8]>, RecvError> {
+        match self.poll_recv_ready(&mut Context::from_waker(task::noop_waker_ref())) {
+            Poll::Pending => Ok(None),
+            Poll::Ready(Ok(())) => Ok(Some(self.recv_next()?)),
+            Poll::Ready(Err(err)) => Err(err),
+        }
     }
 
     pub fn poll_send(&mut self, cx: &mut Context, msg: &[u8]) -> Poll<Result<(), SendError>> {

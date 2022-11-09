@@ -245,11 +245,20 @@ impl ReliableChannel {
     }
 
     /// Attempt to write data without blocking or registering wakeups.
-    pub fn try_write(&mut self, data: &mut [u8]) -> Result<usize, Error> {
+    pub fn try_write(&mut self, data: &[u8]) -> Result<usize, Error> {
         if self.task.is_terminated() {
             Err(Error::Shutdown)
         } else {
             Ok(self.send_window_writer.write(data) as usize)
+        }
+    }
+
+    /// Attempt to read data without blocking or registering wakeups.
+    pub fn try_read(&mut self, data: &mut [u8]) -> Result<usize, Error> {
+        if self.task.is_terminated() {
+            Err(Error::Shutdown)
+        } else {
+            Ok(self.recv_window_reader.read(data) as usize)
         }
     }
 }
