@@ -27,7 +27,7 @@ pub use self::{
     },
     reliable_bincode_channel::{ReliableBincodeChannel, ReliableTypedChannel},
     reliable_channel::ReliableChannel,
-    runtime::Runtime,
+    runtime::{Spawn, Timer},
     unreliable_bincode_channel::{UnreliableBincodeChannel, UnreliableTypedChannel},
     unreliable_channel::UnreliableChannel,
 };

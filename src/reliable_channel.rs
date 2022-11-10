@@ -21,7 +21,7 @@ use thiserror::Error;
 use crate::{
     bandwidth_limiter::BandwidthLimiter,
     packet::{Packet, PacketPool},
-    runtime::Runtime,
+    runtime::{Spawn, Timer},
     spsc,
     windows::{
         stream_gt, AckResult, RecvWindow, RecvWindowReader, SendWindow, SendWindowWriter, StreamPos,
@@ -84,15 +84,17 @@ pub struct ReliableChannel {
 }
 
 impl ReliableChannel {
-    pub fn new<R, P>(
-        runtime: R,
+    pub fn new<S, T, P>(
+        spawn: S,
+        timer: T,
         packet_pool: P,
         settings: Settings,
         sender: spsc::Sender<P::Packet>,
         receiver: spsc::Receiver<P::Packet>,
     ) -> Self
     where
-        R: Runtime + Clone + 'static,
+        S: Spawn + 'static,
+        T: Timer + 'static,
         P: PacketPool + Send + 'static,
         P::Packet: Send,
     {
@@ -104,7 +106,7 @@ impl ReliableChannel {
         assert!(settings.rtt_update_factor > 0.);
         assert!(settings.rtt_resend_factor > 0.);
 
-        let resend_timer = Box::pin(runtime.sleep(settings.resend_time).fuse());
+        let resend_timer = Box::pin(timer.sleep(settings.resend_time).fuse());
 
         let (send_window, send_window_writer) =
             SendWindow::new(settings.send_window_size, Wrapping(0));
@@ -113,17 +115,14 @@ impl ReliableChannel {
 
         let shared = Arc::new(Shared::default());
 
-        let bandwidth_limiter = BandwidthLimiter::new(
-            runtime.clone(),
-            settings.bandwidth,
-            settings.burst_bandwidth,
-        );
+        let bandwidth_limiter =
+            BandwidthLimiter::new(&timer, settings.bandwidth, settings.burst_bandwidth);
         let remote_recv_available = settings.init_send;
         let rtt_estimate = settings.initial_rtt.as_secs_f64();
 
         let task = Task {
             settings,
-            runtime: runtime.clone(),
+            timer,
             packet_pool,
             sender,
             receiver,
@@ -139,7 +138,7 @@ impl ReliableChannel {
         let (remote, remote_handle) =
             { async move { task.main_loop().await.unwrap_err() } }.remote_handle();
 
-        runtime.spawn(remote);
+        spawn.spawn(remote);
 
         ReliableChannel {
             send_window_writer,
@@ -277,12 +276,12 @@ struct UnackedRange<I> {
     retransmit: bool,
 }
 
-struct Task<R, P>
+struct Task<T, P>
 where
-    R: Runtime,
+    T: Timer,
     P: PacketPool,
 {
-    runtime: R,
+    timer: T,
     settings: Settings,
     packet_pool: P,
     sender: spsc::Sender<P::Packet>,
@@ -291,16 +290,16 @@ where
     shared: Arc<Shared>,
     send_window: SendWindow,
     recv_window: RecvWindow,
-    resend_timer: Pin<Box<Fuse<R::Sleep>>>,
+    resend_timer: Pin<Box<Fuse<T::Sleep>>>,
     remote_recv_available: u32,
-    unacked_ranges: FxHashMap<StreamPos, UnackedRange<R::Instant>>,
+    unacked_ranges: FxHashMap<StreamPos, UnackedRange<T::Instant>>,
     rtt_estimate: f64,
-    bandwidth_limiter: BandwidthLimiter<R>,
+    bandwidth_limiter: BandwidthLimiter<T>,
 }
 
-impl<R, P> Task<R, P>
+impl<T, P> Task<T, P>
 where
-    R: Runtime,
+    T: Timer,
     P: PacketPool,
 {
     async fn main_loop(mut self) -> Result<(), Error> {
@@ -311,7 +310,7 @@ where
                 SendAvailable,
             }
 
-            self.bandwidth_limiter.update_available();
+            self.bandwidth_limiter.update_available(&self.timer);
 
             let wake_reason = {
                 let bandwidth_limiter = &self.bandwidth_limiter;
@@ -323,12 +322,13 @@ where
                     }
                     // Don't bother waking up for the resend timer until we have bandwidth available
                     // to do resends.
-                    if let Some(delay) = bandwidth_limiter.delay_until_available() {
+                    if let Some(delay) = bandwidth_limiter.delay_until_available(&self.timer) {
                         delay.await;
                     }
                 }
                 .fuse();
 
+                let timer = &self.timer;
                 let shared = &self.shared;
                 let send_window = &mut self.send_window;
                 let remote_recv_available = self.remote_recv_available;
@@ -340,7 +340,7 @@ where
                     }
 
                     // Don't wake up for sending new data until we have bandwidth available.
-                    if let Some(delay) = bandwidth_limiter.delay_until_available() {
+                    if let Some(delay) = bandwidth_limiter.delay_until_available(timer) {
                         delay.await;
                     }
 
@@ -369,13 +369,13 @@ where
                 }
             };
 
-            self.bandwidth_limiter.update_available();
+            self.bandwidth_limiter.update_available(&self.timer);
 
             match wake_reason {
                 WakeReason::ResendTimer => {
                     self.resend().await?;
                     self.resend_timer
-                        .set(self.runtime.sleep(self.settings.resend_time).fuse());
+                        .set(self.timer.sleep(self.settings.resend_time).fuse());
                 }
                 WakeReason::IncomingPacket(packet) => {
                     self.recv_packet(packet).await?;
@@ -385,7 +385,7 @@ where
                     // starving resends
                     self.resend().await?;
                     self.resend_timer
-                        .set(self.runtime.sleep(self.settings.resend_time).fuse());
+                        .set(self.timer.sleep(self.settings.resend_time).fuse());
 
                     self.send().await?;
                 }
@@ -432,7 +432,7 @@ where
             UnackedRange {
                 start,
                 end,
-                last_sent: Some(self.runtime.now()),
+                last_sent: Some(self.timer.now()),
                 retransmit: false,
             },
         );
@@ -456,14 +456,14 @@ where
             }
 
             let resend = if let Some(last_sent) = unacked.last_sent {
-                let elapsed = self.runtime.duration_between(last_sent, self.runtime.now());
+                let elapsed = self.timer.duration_between(last_sent, self.timer.now());
                 elapsed.as_secs_f64() > self.rtt_estimate * self.settings.rtt_resend_factor
             } else {
                 true
             };
 
             if resend {
-                unacked.last_sent = Some(self.runtime.now());
+                unacked.last_sent = Some(self.timer.now());
                 unacked.retransmit = true;
 
                 let len = (unacked.end - unacked.start).0;
@@ -552,8 +552,8 @@ where
                 if !acked_range.retransmit {
                     if let Some(last_sent) = acked_range.last_sent {
                         let rtt = self
-                            .runtime
-                            .duration_between(last_sent, self.runtime.now())
+                            .timer
+                            .duration_between(last_sent, self.timer.now())
                             .min(self.settings.max_rtt)
                             .as_secs_f64();
                         self.rtt_estimate +=

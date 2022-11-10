@@ -1,21 +1,19 @@
 use std::time::Duration;
 
-use crate::Runtime;
+use crate::runtime::Timer;
 
-pub struct BandwidthLimiter<R: Runtime> {
-    runtime: R,
+pub struct BandwidthLimiter<T: Timer> {
     bandwidth: u32,
     burst_bandwidth: u32,
     bytes_available: f64,
-    last_calculation: R::Instant,
+    last_calculation: T::Instant,
 }
 
-impl<R: Runtime> BandwidthLimiter<R> {
+impl<T: Timer> BandwidthLimiter<T> {
     /// The `burst_bandwidth` is the maximum amount of bandwidth credit that can accumulate.
-    pub fn new(runtime: R, bandwidth: u32, burst_bandwidth: u32) -> BandwidthLimiter<R> {
-        let last_calculation = runtime.now();
+    pub fn new(timer: &T, bandwidth: u32, burst_bandwidth: u32) -> Self {
+        let last_calculation = timer.now();
         BandwidthLimiter {
-            runtime,
             bandwidth,
             burst_bandwidth,
             bytes_available: burst_bandwidth as f64,
@@ -24,9 +22,9 @@ impl<R: Runtime> BandwidthLimiter<R> {
     }
 
     /// Delay until a time where there will be bandwidth available.
-    pub fn delay_until_available(&self) -> Option<R::Sleep> {
+    pub fn delay_until_available(&self, timer: &T) -> Option<T::Sleep> {
         if self.bytes_available < 0. {
-            Some(self.runtime.sleep(Duration::from_secs_f64(
+            Some(timer.sleep(Duration::from_secs_f64(
                 (-self.bytes_available) / self.bandwidth as f64,
             )))
         } else {
@@ -36,10 +34,9 @@ impl<R: Runtime> BandwidthLimiter<R> {
 
     /// Actually update the amount of available bandwidth. Additional available bytes are not added
     /// until this method is called to add them.
-    pub fn update_available(&mut self) {
-        let now = self.runtime.now();
-        self.bytes_available += self
-            .runtime
+    pub fn update_available(&mut self, timer: &T) {
+        let now = timer.now();
+        self.bytes_available += timer
             .duration_between(self.last_calculation, now)
             .as_secs_f64()
             * self.bandwidth as f64;

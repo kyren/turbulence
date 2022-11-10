@@ -7,7 +7,7 @@ use turbulence::{
     buffer::BufferPacketPool,
     compressed_bincode_channel::CompressedBincodeChannel,
     reliable_channel::{ReliableChannel, Settings},
-    runtime::Runtime,
+    runtime::Spawn,
     spsc,
 };
 
@@ -45,6 +45,7 @@ fn test_compressed_bincode_channel() {
     condition_link(
         CONDITION,
         runtime.handle(),
+        runtime.handle(),
         packet_pool.clone(),
         SmallRng::from_rng(thread_rng()).unwrap(),
         acondsend,
@@ -56,6 +57,7 @@ fn test_compressed_bincode_channel() {
     condition_link(
         CONDITION,
         runtime.handle(),
+        runtime.handle(),
         packet_pool.clone(),
         SmallRng::from_rng(thread_rng()).unwrap(),
         bcondsend,
@@ -64,12 +66,14 @@ fn test_compressed_bincode_channel() {
 
     let mut stream1 = CompressedBincodeChannel::new(ReliableChannel::new(
         runtime.handle(),
+        runtime.handle(),
         packet_pool.clone(),
         SETTINGS.clone(),
         bsend,
         arecv,
     ));
     let mut stream2 = CompressedBincodeChannel::new(ReliableChannel::new(
+        runtime.handle(),
         runtime.handle(),
         packet_pool.clone(),
         SETTINGS.clone(),

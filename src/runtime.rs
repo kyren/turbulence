@@ -1,18 +1,20 @@
+//! Traits for async runtime functionality needed by `turbulence`.
+
 use std::{future::Future, time::Duration};
 
-/// Trait for async runtime functionality needed by `turbulence`.
-///
-/// This is designed so that it can be implemented on multiple platforms with multiple runtimes,
-/// including `wasm32-unknown-unknown`, where `std::time::Instant` is unavailable.
-pub trait Runtime: Send + Sync {
-    type Instant: Send + Sync + Copy;
-    type Sleep: Future<Output = ()> + Send;
-
-    /// This is similar to the `futures::task::Spawn` trait, but it is generic in the spawned
-    /// future, which is better for backends like tokio.
+/// This is similar to the `futures::task::Spawn` trait, but it is generic in the spawned
+/// future, which is better for backends like tokio.
+pub trait Spawn: Send + Sync {
     fn spawn<F>(&self, future: F)
     where
         F: Future<Output = ()> + Send + 'static;
+}
+
+/// This is designed so that it can be implemented on multiple platforms with multiple runtimes,
+/// including `wasm32-unknown-unknown`, where `std::time::Instant` is unavailable.
+pub trait Timer: Send + Sync {
+    type Instant: Send + Sync + Copy;
+    type Sleep: Future<Output = ()> + Send;
 
     /// Return the current instant.
     fn now(&self) -> Self::Instant;

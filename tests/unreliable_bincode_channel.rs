@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use turbulence::{
     buffer::BufferPacketPool,
-    runtime::Runtime,
+    runtime::Spawn,
     spsc,
     unreliable_bincode_channel::UnreliableTypedChannel,
     unreliable_channel::{Settings, UnreliableChannel},

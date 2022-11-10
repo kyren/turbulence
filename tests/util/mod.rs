@@ -22,7 +22,7 @@ use turbulence::{
     buffer::BufferPool,
     packet::{Packet, PacketPool},
     packet_multiplexer::{MuxPacket, MuxPacketPool},
-    runtime::Runtime,
+    runtime::{Spawn, Timer},
     spsc,
 };
 
@@ -150,13 +150,15 @@ async fn do_delay(state: Arc<HandleInner>, duration: Duration) -> u64 {
     .await
 }
 
-impl Runtime for SimpleRuntimeHandle {
-    type Instant = u64;
-    type Sleep = Pin<Box<dyn Future<Output = ()> + Send>>;
-
+impl Spawn for SimpleRuntimeHandle {
     fn spawn<F: Future<Output = ()> + Send + 'static>(&self, f: F) {
         self.0.incoming_tasks.lock().unwrap().push(Box::pin(f))
     }
+}
+
+impl Timer for SimpleRuntimeHandle {
+    type Instant = u64;
+    type Sleep = Pin<Box<dyn Future<Output = ()> + Send>>;
 
     fn now(&self) -> Self::Instant {
         self.0.time_state.lock().unwrap().time
@@ -184,7 +186,8 @@ pub struct LinkCondition {
 
 pub fn condition_link<P>(
     condition: LinkCondition,
-    runtime: impl Runtime + Clone + 'static,
+    spawn: impl Spawn + Clone + 'static,
+    timer: impl Timer + Clone + 'static,
     mut pool: P,
     mut rng: impl Rng + Send + 'static,
     mut sender: spsc::Sender<P::Packet>,
@@ -196,7 +199,7 @@ pub fn condition_link<P>(
     // Hack to make implementing delayed packets easier
     let (delay_outgoing, mut delay_incoming) = mpsc::unbounded();
 
-    runtime.spawn(async move {
+    spawn.spawn(async move {
         while let Some(msg) = delay_incoming.next().await {
             if sender.send(msg).await.is_err() {
                 break;
@@ -204,16 +207,16 @@ pub fn condition_link<P>(
         }
     });
 
-    runtime.spawn({
-        let runtime = runtime.clone();
+    spawn.spawn({
+        let spawn = spawn.clone();
         async move {
             loop {
                 match receiver.next().await {
                     Some(packet) => {
                         if rng.gen::<f64>() > condition.loss {
                             if rng.gen::<f64>() <= condition.duplicate {
-                                runtime.spawn({
-                                    let runtime = runtime.clone();
+                                spawn.spawn({
+                                    let timer = timer.clone();
                                     let mut outgoing = delay_outgoing.clone();
                                     let delay = Duration::from_secs_f64(
                                         condition.delay.as_secs_f64()
@@ -222,21 +225,21 @@ pub fn condition_link<P>(
                                     let mut dup_packet = pool.acquire();
                                     dup_packet.extend(&packet[..]);
                                     async move {
-                                        runtime.sleep(delay).await;
+                                        timer.sleep(delay).await;
                                         let _ = outgoing.send(dup_packet).await;
                                     }
                                 });
                             }
 
-                            runtime.spawn({
-                                let runtime = runtime.clone();
+                            spawn.spawn({
+                                let timer = timer.clone();
                                 let mut outgoing = delay_outgoing.clone();
                                 let delay = Duration::from_secs_f64(
                                     condition.delay.as_secs_f64()
                                         + rng.gen::<f64>() * condition.jitter.as_secs_f64(),
                                 );
                                 async move {
-                                    runtime.sleep(delay).await;
+                                    timer.sleep(delay).await;
                                     let _ = outgoing.send(packet).await;
                                 }
                             });

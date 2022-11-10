@@ -20,7 +20,7 @@ use crate::{
     packet::PacketPool,
     packet_multiplexer::{ChannelStatistics, PacketChannel, PacketMultiplexer},
     reliable_channel,
-    runtime::Runtime,
+    runtime::{Spawn, Timer},
     spsc::{self, TryRecvError},
     unreliable_channel, CompressedTypedChannel, MuxPacketPool, ReliableChannel,
     ReliableTypedChannel, UnreliableChannel, UnreliableTypedChannel,
@@ -69,25 +69,29 @@ pub struct ChannelTaskError {
     pub error: TaskError,
 }
 
-pub struct MessageChannelsBuilder<R, P>
+pub struct MessageChannelsBuilder<S, T, P>
 where
-    R: Runtime,
+    S: Spawn,
+    T: Timer,
     P: PacketPool,
 {
-    runtime: R,
+    spawn: S,
+    timer: T,
     pool: P,
     channels: HashSet<PacketChannel>,
-    register_fns: HashMap<TypeId, (&'static str, MessageChannelSettings, RegisterFn<R, P>)>,
+    register_fns: HashMap<TypeId, (&'static str, MessageChannelSettings, RegisterFn<S, T, P>)>,
 }
 
-impl<R, P> MessageChannelsBuilder<R, P>
+impl<S, T, P> MessageChannelsBuilder<S, T, P>
 where
-    R: Runtime,
+    S: Spawn,
+    T: Timer,
     P: PacketPool,
 {
-    pub fn new(runtime: R, pool: P) -> Self {
+    pub fn new(spawn: S, timer: T, pool: P) -> Self {
         MessageChannelsBuilder {
-            runtime,
+            spawn,
+            timer,
             pool,
             channels: HashSet::new(),
             register_fns: HashMap::new(),
@@ -95,9 +99,10 @@ where
     }
 }
 
-impl<R, P> MessageChannelsBuilder<R, P>
+impl<S, T, P> MessageChannelsBuilder<S, T, P>
 where
-    R: Runtime + Clone + 'static,
+    S: Spawn + Clone + 'static,
+    T: Timer + Clone + 'static,
     P: PacketPool + Clone + Send + 'static,
     P::Packet: Send,
 {
@@ -117,7 +122,11 @@ where
         match self.register_fns.entry(TypeId::of::<M>()) {
             hash_map::Entry::Occupied(_) => Err(ChannelAlreadyRegistered::MessageType),
             hash_map::Entry::Vacant(vacant) => {
-                vacant.insert((type_name::<M>(), settings, register_message_type::<R, P, M>));
+                vacant.insert((
+                    type_name::<M>(),
+                    settings,
+                    register_message_type::<S, T, P, M>,
+                ));
                 Ok(())
             }
         }
@@ -127,7 +136,8 @@ where
     /// types via channels on the given packet multiplexer.
     pub fn build(self, multiplexer: &mut PacketMultiplexer<P::Packet>) -> MessageChannels {
         let Self {
-            runtime,
+            spawn,
+            timer,
             pool,
             register_fns,
             ..
@@ -138,7 +148,8 @@ where
             .map(|(_, (type_name, settings, register_fn))| {
                 register_fn(
                     settings,
-                    runtime.clone(),
+                    spawn.clone(),
+                    timer.clone(),
                     pool.clone(),
                     multiplexer,
                     &mut channels_map,
@@ -158,7 +169,7 @@ where
             }
         }
         .remote_handle();
-        runtime.spawn(remote);
+        spawn.spawn(remote);
 
         MessageChannels {
             disconnected: false,
@@ -390,9 +401,10 @@ impl MessageChannels {
 }
 
 type ChannelTask = BoxFuture<'static, Result<(), TaskError>>;
-type RegisterFn<R, P> = fn(
+type RegisterFn<S, T, P> = fn(
     MessageChannelSettings,
-    R,
+    S,
+    T,
     P,
     &mut PacketMultiplexer<<P as PacketPool>::Packet>,
     &mut ChannelsMap,
@@ -440,15 +452,17 @@ impl ChannelsMap {
     }
 }
 
-fn register_message_type<R, P, M>(
+fn register_message_type<S, T, P, M>(
     settings: MessageChannelSettings,
-    runtime: R,
+    spawn: S,
+    timer: T,
     packet_pool: P,
     multiplexer: &mut PacketMultiplexer<P::Packet>,
     channels_map: &mut ChannelsMap,
 ) -> ChannelTask
 where
-    R: Runtime + Clone + 'static,
+    S: Spawn + Clone + 'static,
+    T: Timer + Clone + 'static,
     P: PacketPool + Clone + Send + 'static,
     P::Packet: Send,
     M: ChannelMessage,
@@ -467,7 +481,7 @@ where
     let channel_task = match settings.channel_mode {
         MessageChannelMode::Unreliable(unreliable_settings) => channel_task(
             UnreliableTypedChannel::new(UnreliableChannel::new(
-                runtime,
+                timer,
                 packet_pool,
                 unreliable_settings,
                 channel_sender,
@@ -480,7 +494,8 @@ where
         .boxed(),
         MessageChannelMode::Reliable(reliable_settings) => channel_task(
             ReliableTypedChannel::new(ReliableChannel::new(
-                runtime,
+                spawn,
+                timer,
                 packet_pool,
                 reliable_settings,
                 channel_sender,
@@ -493,7 +508,8 @@ where
         .boxed(),
         MessageChannelMode::Compressed(reliable_settings) => channel_task(
             CompressedTypedChannel::new(ReliableChannel::new(
-                runtime,
+                spawn,
+                timer,
                 packet_pool,
                 reliable_settings,
                 channel_sender,
@@ -522,9 +538,9 @@ trait MessageBincodeChannel<M: ChannelMessage> {
     fn poll_flush(&mut self, cx: &mut Context) -> Poll<Result<(), TaskError>>;
 }
 
-impl<R, P, M> MessageBincodeChannel<M> for UnreliableTypedChannel<R, P, M>
+impl<T, P, M> MessageBincodeChannel<M> for UnreliableTypedChannel<T, P, M>
 where
-    R: Runtime,
+    T: Timer,
     P: PacketPool,
     M: ChannelMessage,
 {

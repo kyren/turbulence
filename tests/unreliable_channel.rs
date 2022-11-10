@@ -2,7 +2,7 @@ use futures::channel::oneshot;
 
 use turbulence::{
     buffer::BufferPacketPool,
-    runtime::Runtime,
+    runtime::Spawn,
     spsc,
     unreliable_channel::{Settings, UnreliableChannel},
 };

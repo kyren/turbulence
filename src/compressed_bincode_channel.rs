@@ -100,11 +100,11 @@ impl CompressedBincodeChannel {
     ///
     /// This method is cancel safe, it will never partially send a message, and completes
     /// immediately upon successfully queuing a message to send.
-    pub async fn send<T: Serialize>(&mut self, msg: &T) -> Result<(), SendError> {
+    pub async fn send<M: Serialize>(&mut self, msg: &M) -> Result<(), SendError> {
         future::poll_fn(|cx| self.poll_send(cx, msg)).await
     }
 
-    pub fn try_send<T: Serialize>(&mut self, msg: &T) -> Result<bool, SendError> {
+    pub fn try_send<M: Serialize>(&mut self, msg: &M) -> Result<bool, SendError> {
         match self.poll_send(&mut Context::from_waker(task::noop_waker_ref()), msg) {
             Poll::Pending => Ok(false),
             Poll::Ready(Ok(())) => Ok(true),
@@ -132,11 +132,11 @@ impl CompressedBincodeChannel {
     ///
     /// This method is cancel safe, it will never partially receive a message and will never drop a
     /// received message.
-    pub async fn recv<T: DeserializeOwned>(&mut self) -> Result<T, RecvError> {
+    pub async fn recv<M: DeserializeOwned>(&mut self) -> Result<M, RecvError> {
         future::poll_fn(|cx| self.poll_recv(cx)).await
     }
 
-    pub fn try_recv<T: DeserializeOwned>(&mut self) -> Result<Option<T>, RecvError> {
+    pub fn try_recv<M: DeserializeOwned>(&mut self) -> Result<Option<M>, RecvError> {
         match self.poll_recv(&mut Context::from_waker(task::noop_waker_ref())) {
             Poll::Pending => Ok(None),
             Poll::Ready(Ok(val)) => Ok(Some(val)),
@@ -144,10 +144,10 @@ impl CompressedBincodeChannel {
         }
     }
 
-    pub fn poll_send<T: Serialize>(
+    pub fn poll_send<M: Serialize>(
         &mut self,
         cx: &mut Context,
-        msg: &T,
+        msg: &M,
     ) -> Poll<Result<(), SendError>> {
         let bincode_config = self.bincode_config();
 
@@ -168,10 +168,10 @@ impl CompressedBincodeChannel {
         Poll::Ready(Ok(()))
     }
 
-    pub fn poll_recv<T: DeserializeOwned>(
+    pub fn poll_recv<M: DeserializeOwned>(
         &mut self,
         cx: &mut Context,
-    ) -> Poll<Result<T, RecvError>> {
+    ) -> Poll<Result<M, RecvError>> {
         let bincode_config = self.bincode_config();
 
         loop {
@@ -275,18 +275,18 @@ impl CompressedBincodeChannel {
 }
 
 /// Wrapper over an `CompressedBincodeChannel` that only allows a single message type.
-pub struct CompressedTypedChannel<T> {
+pub struct CompressedTypedChannel<M> {
     channel: CompressedBincodeChannel,
-    _phantom: PhantomData<T>,
+    _phantom: PhantomData<M>,
 }
 
-impl<T> From<ReliableChannel> for CompressedTypedChannel<T> {
+impl<M> From<ReliableChannel> for CompressedTypedChannel<M> {
     fn from(channel: ReliableChannel) -> Self {
         Self::new(channel)
     }
 }
 
-impl<T> CompressedTypedChannel<T> {
+impl<M> CompressedTypedChannel<M> {
     pub fn new(channel: ReliableChannel) -> Self {
         CompressedTypedChannel {
             channel: CompressedBincodeChannel::new(channel),
@@ -311,30 +311,30 @@ impl<T> CompressedTypedChannel<T> {
     }
 }
 
-impl<T: Serialize> CompressedTypedChannel<T> {
-    pub async fn send(&mut self, msg: &T) -> Result<(), SendError> {
+impl<M: Serialize> CompressedTypedChannel<M> {
+    pub async fn send(&mut self, msg: &M) -> Result<(), SendError> {
         self.channel.send(msg).await
     }
 
-    pub fn try_send(&mut self, msg: &T) -> Result<bool, SendError> {
+    pub fn try_send(&mut self, msg: &M) -> Result<bool, SendError> {
         self.channel.try_send(msg)
     }
 
-    pub fn poll_send(&mut self, cx: &mut Context, msg: &T) -> Poll<Result<(), SendError>> {
+    pub fn poll_send(&mut self, cx: &mut Context, msg: &M) -> Poll<Result<(), SendError>> {
         self.channel.poll_send(cx, msg)
     }
 }
 
-impl<T: DeserializeOwned> CompressedTypedChannel<T> {
-    pub async fn recv(&mut self) -> Result<T, RecvError> {
+impl<M: DeserializeOwned> CompressedTypedChannel<M> {
+    pub async fn recv(&mut self) -> Result<M, RecvError> {
         self.channel.recv().await
     }
 
-    pub fn try_recv(&mut self) -> Result<Option<T>, RecvError> {
+    pub fn try_recv(&mut self) -> Result<Option<M>, RecvError> {
         self.channel.try_recv()
     }
 
-    pub fn poll_recv(&mut self, cx: &mut Context) -> Poll<Result<T, RecvError>> {
+    pub fn poll_recv(&mut self, cx: &mut Context) -> Poll<Result<M, RecvError>> {
         self.channel.poll_recv(cx)
     }
 }

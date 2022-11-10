@@ -80,13 +80,13 @@ impl ReliableBincodeChannel {
     ///
     /// This method is cancel safe, it will never partially send a message, and completes
     /// immediately upon successfully queuing a message to send.
-    pub async fn send<T: Serialize>(&mut self, msg: &T) -> Result<(), SendError> {
+    pub async fn send<M: Serialize>(&mut self, msg: &M) -> Result<(), SendError> {
         future::poll_fn(|cx| self.poll_send_ready(cx)).await?;
         self.start_send(msg)?;
         Ok(())
     }
 
-    pub fn try_send<T: Serialize>(&mut self, msg: &T) -> Result<bool, SendError> {
+    pub fn try_send<M: Serialize>(&mut self, msg: &M) -> Result<bool, SendError> {
         if self.try_send_ready()? {
             self.start_send(msg)?;
             Ok(true)
@@ -114,12 +114,12 @@ impl ReliableBincodeChannel {
     ///
     /// This method is cancel safe, it will never partially read a message or drop received
     /// messages.
-    pub async fn recv<'a, T: Deserialize<'a>>(&'a mut self) -> Result<T, RecvError> {
+    pub async fn recv<'a, M: Deserialize<'a>>(&'a mut self) -> Result<M, RecvError> {
         future::poll_fn(|cx| self.poll_recv_ready(cx)).await?;
         self.recv_next()
     }
 
-    pub fn try_recv<'a, T: Deserialize<'a>>(&'a mut self) -> Result<Option<T>, RecvError> {
+    pub fn try_recv<'a, M: Deserialize<'a>>(&'a mut self) -> Result<Option<M>, RecvError> {
         match self.poll_recv(&mut Context::from_waker(task::noop_waker_ref())) {
             Poll::Pending => Ok(None),
             Poll::Ready(Ok(val)) => Ok(Some(val)),
@@ -152,7 +152,7 @@ impl ReliableBincodeChannel {
         }
     }
 
-    pub fn start_send<T: Serialize>(&mut self, msg: &T) -> Result<(), bincode::Error> {
+    pub fn start_send<M: Serialize>(&mut self, msg: &M) -> Result<(), bincode::Error> {
         assert!(self.write_buffer.is_empty());
         self.write_buffer.resize(2, 0);
         let bincode_config = self.bincode_config();
@@ -171,10 +171,10 @@ impl ReliableBincodeChannel {
         Poll::Ready(Ok(()))
     }
 
-    pub fn poll_recv<'a, T: Deserialize<'a>>(
+    pub fn poll_recv<'a, M: Deserialize<'a>>(
         &'a mut self,
         cx: &mut Context,
-    ) -> Poll<Result<T, RecvError>> {
+    ) -> Poll<Result<M, RecvError>> {
         ready!(self.poll_recv_ready(cx))?;
         Poll::Ready(self.recv_next())
     }
@@ -192,7 +192,7 @@ impl ReliableBincodeChannel {
         Poll::Ready(Ok(()))
     }
 
-    fn recv_next<'a, T: Deserialize<'a>>(&'a mut self) -> Result<T, RecvError> {
+    fn recv_next<'a, M: Deserialize<'a>>(&'a mut self) -> Result<M, RecvError> {
         let bincode_config = self.bincode_config();
         let res = bincode_config.deserialize(&self.read_buffer[2..]);
         self.read_pos = 0;
@@ -215,18 +215,18 @@ impl ReliableBincodeChannel {
 }
 
 /// Wrapper over an `ReliableBincodeChannel` that only allows a single message type.
-pub struct ReliableTypedChannel<T> {
+pub struct ReliableTypedChannel<M> {
     channel: ReliableBincodeChannel,
-    _phantom: PhantomData<T>,
+    _phantom: PhantomData<M>,
 }
 
-impl<T> From<ReliableChannel> for ReliableTypedChannel<T> {
+impl<M> From<ReliableChannel> for ReliableTypedChannel<M> {
     fn from(channel: ReliableChannel) -> Self {
         Self::new(channel)
     }
 }
 
-impl<T> ReliableTypedChannel<T> {
+impl<M> ReliableTypedChannel<M> {
     pub fn new(channel: ReliableChannel) -> Self {
         ReliableTypedChannel {
             channel: ReliableBincodeChannel::new(channel),
@@ -262,30 +262,30 @@ impl<T> ReliableTypedChannel<T> {
     }
 }
 
-impl<T: Serialize> ReliableTypedChannel<T> {
-    pub async fn send(&mut self, msg: &T) -> Result<(), SendError> {
+impl<M: Serialize> ReliableTypedChannel<M> {
+    pub async fn send(&mut self, msg: &M) -> Result<(), SendError> {
         self.channel.send(msg).await
     }
 
-    pub fn try_send(&mut self, msg: &T) -> Result<bool, SendError> {
+    pub fn try_send(&mut self, msg: &M) -> Result<bool, SendError> {
         self.channel.try_send(msg)
     }
 
-    pub fn start_send(&mut self, msg: &T) -> Result<(), bincode::Error> {
+    pub fn start_send(&mut self, msg: &M) -> Result<(), bincode::Error> {
         self.channel.start_send(msg)
     }
 }
 
-impl<'a, T: Deserialize<'a>> ReliableTypedChannel<T> {
-    pub async fn recv(&'a mut self) -> Result<T, RecvError> {
+impl<'a, M: Deserialize<'a>> ReliableTypedChannel<M> {
+    pub async fn recv(&'a mut self) -> Result<M, RecvError> {
         self.channel.recv().await
     }
 
-    pub fn try_recv(&'a mut self) -> Result<Option<T>, RecvError> {
+    pub fn try_recv(&'a mut self) -> Result<Option<M>, RecvError> {
         self.channel.try_recv()
     }
 
-    pub fn poll_recv(&'a mut self, cx: &mut Context) -> Poll<Result<T, RecvError>> {
+    pub fn poll_recv(&'a mut self, cx: &mut Context) -> Poll<Result<M, RecvError>> {
         self.channel.poll_recv(cx)
     }
 }

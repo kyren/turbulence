@@ -6,7 +6,7 @@ use rand::{rngs::SmallRng, thread_rng, SeedableRng};
 use turbulence::{
     buffer::BufferPacketPool,
     reliable_channel::{ReliableChannel, Settings},
-    runtime::Runtime,
+    runtime::{Spawn, Timer},
     spsc,
 };
 
@@ -44,6 +44,7 @@ fn test_reliable_stream() {
     condition_link(
         CONDITION,
         runtime.handle(),
+        runtime.handle(),
         packet_pool.clone(),
         SmallRng::from_rng(thread_rng()).unwrap(),
         acondsend,
@@ -55,6 +56,7 @@ fn test_reliable_stream() {
     condition_link(
         CONDITION,
         runtime.handle(),
+        runtime.handle(),
         packet_pool.clone(),
         SmallRng::from_rng(thread_rng()).unwrap(),
         bcondsend,
@@ -63,12 +65,14 @@ fn test_reliable_stream() {
 
     let mut stream1 = ReliableChannel::new(
         runtime.handle(),
+        runtime.handle(),
         packet_pool.clone(),
         SETTINGS,
         bsend,
         arecv,
     );
     let mut stream2 = ReliableChannel::new(
+        runtime.handle(),
         runtime.handle(),
         packet_pool.clone(),
         SETTINGS,

@@ -13,7 +13,7 @@ use thiserror::Error;
 use crate::{
     bandwidth_limiter::BandwidthLimiter,
     packet::{Packet, PacketPool, MAX_PACKET_LEN},
-    runtime::Runtime,
+    runtime::Timer,
     spsc,
 };
 
@@ -50,40 +50,40 @@ pub struct Settings {
 }
 
 /// Turns a stream of unreliable, unordered packets into a stream of unreliable, unordered messages.
-pub struct UnreliableChannel<R, P>
+pub struct UnreliableChannel<T, P>
 where
-    R: Runtime,
+    T: Timer,
     P: PacketPool,
 {
+    timer: T,
     packet_pool: P,
-    bandwidth_limiter: BandwidthLimiter<R>,
+    bandwidth_limiter: BandwidthLimiter<T>,
     sender: spsc::Sender<P::Packet>,
     receiver: spsc::Receiver<P::Packet>,
     out_packet: P::Packet,
     in_packet: Option<(P::Packet, usize)>,
-    delay_until_available: Pin<Box<Option<R::Sleep>>>,
+    delay_until_available: Pin<Box<Option<T::Sleep>>>,
 }
 
-impl<R, P> UnreliableChannel<R, P>
+impl<T, P> UnreliableChannel<T, P>
 where
-    R: Runtime,
+    T: Timer,
     P: PacketPool,
 {
     pub fn new(
-        runtime: R,
+        timer: T,
         mut packet_pool: P,
         settings: Settings,
         sender: spsc::Sender<P::Packet>,
         receiver: spsc::Receiver<P::Packet>,
     ) -> Self {
         let out_packet = packet_pool.acquire();
+        let bandwidth_limiter =
+            BandwidthLimiter::new(&timer, settings.bandwidth, settings.burst_bandwidth);
         UnreliableChannel {
+            timer,
             packet_pool,
-            bandwidth_limiter: BandwidthLimiter::new(
-                runtime,
-                settings.bandwidth,
-                settings.burst_bandwidth,
-            ),
+            bandwidth_limiter,
             receiver,
             sender,
             out_packet,
@@ -186,8 +186,8 @@ where
         }
 
         if self.delay_until_available.is_none() {
-            self.bandwidth_limiter.update_available();
-            if let Some(delay) = self.bandwidth_limiter.delay_until_available() {
+            self.bandwidth_limiter.update_available(&self.timer);
+            if let Some(delay) = self.bandwidth_limiter.delay_until_available(&self.timer) {
                 self.delay_until_available.set(Some(delay));
             }
         }

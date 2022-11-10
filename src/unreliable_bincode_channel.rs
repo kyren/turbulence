@@ -10,7 +10,7 @@ use thiserror::Error;
 
 use crate::{
     packet::PacketPool,
-    runtime::Runtime,
+    runtime::Timer,
     unreliable_channel::{self, UnreliableChannel},
 };
 
@@ -37,38 +37,38 @@ pub enum RecvError {
 ///
 /// Just like the underlying channel, messages are not guaranteed to arrive, nor are they guaranteed
 /// to arrive in order.
-pub struct UnreliableBincodeChannel<R, P>
+pub struct UnreliableBincodeChannel<T, P>
 where
-    R: Runtime,
+    T: Timer,
     P: PacketPool,
 {
-    channel: UnreliableChannel<R, P>,
+    channel: UnreliableChannel<T, P>,
     pending_write: Vec<u8>,
 }
 
-impl<R, P> From<UnreliableChannel<R, P>> for UnreliableBincodeChannel<R, P>
+impl<T, P> From<UnreliableChannel<T, P>> for UnreliableBincodeChannel<T, P>
 where
-    R: Runtime,
+    T: Timer,
     P: PacketPool,
 {
-    fn from(channel: UnreliableChannel<R, P>) -> Self {
+    fn from(channel: UnreliableChannel<T, P>) -> Self {
         Self::new(channel)
     }
 }
 
-impl<R, P> UnreliableBincodeChannel<R, P>
+impl<T, P> UnreliableBincodeChannel<T, P>
 where
-    R: Runtime,
+    T: Timer,
     P: PacketPool,
 {
-    pub fn new(channel: UnreliableChannel<R, P>) -> Self {
+    pub fn new(channel: UnreliableChannel<T, P>) -> Self {
         UnreliableBincodeChannel {
             channel,
             pending_write: Vec::new(),
         }
     }
 
-    pub fn into_inner(self) -> UnreliableChannel<R, P> {
+    pub fn into_inner(self) -> UnreliableChannel<T, P> {
         self.channel
     }
 
@@ -86,13 +86,13 @@ where
     ///
     /// This method is cancel safe, it will never partially send a message, and completes
     /// immediately upon successfully queuing a message to send.
-    pub async fn send<T: Serialize>(&mut self, msg: &T) -> Result<(), SendError> {
+    pub async fn send<M: Serialize>(&mut self, msg: &M) -> Result<(), SendError> {
         future::poll_fn(|cx| self.poll_send_ready(cx)).await?;
         self.start_send(msg)?;
         Ok(())
     }
 
-    pub fn try_send<T: Serialize>(&mut self, msg: &T) -> Result<bool, SendError> {
+    pub fn try_send<M: Serialize>(&mut self, msg: &M) -> Result<bool, SendError> {
         if self.try_send_ready()? {
             self.start_send(msg)?;
             Ok(true)
@@ -123,13 +123,13 @@ where
     ///
     /// This method is cancel safe, it will never partially read a message or drop received
     /// messages.
-    pub async fn recv<'a, T: Deserialize<'a>>(&'a mut self) -> Result<T, RecvError> {
+    pub async fn recv<'a, M: Deserialize<'a>>(&'a mut self) -> Result<M, RecvError> {
         let bincode_config = self.bincode_config();
         let msg = self.channel.recv().await?;
         Ok(bincode_config.deserialize(msg)?)
     }
 
-    pub fn try_recv<'a, T: Deserialize<'a>>(&'a mut self) -> Result<Option<T>, RecvError> {
+    pub fn try_recv<'a, M: Deserialize<'a>>(&'a mut self) -> Result<Option<M>, RecvError> {
         match self.poll_recv(&mut Context::from_waker(task::noop_waker_ref())) {
             Poll::Pending => Ok(None),
             Poll::Ready(Ok(val)) => Ok(val),
@@ -156,7 +156,7 @@ where
         }
     }
 
-    pub fn start_send<T: Serialize>(&mut self, msg: &T) -> Result<(), bincode::Error> {
+    pub fn start_send<M: Serialize>(&mut self, msg: &M) -> Result<(), bincode::Error> {
         assert!(self.pending_write.is_empty());
 
         let bincode_config = self.bincode_config();
@@ -174,10 +174,10 @@ where
         Poll::Ready(Ok(()))
     }
 
-    pub fn poll_recv<'a, T: Deserialize<'a>>(
+    pub fn poll_recv<'a, M: Deserialize<'a>>(
         &'a mut self,
         cx: &mut Context,
-    ) -> Poll<Result<T, RecvError>> {
+    ) -> Poll<Result<M, RecvError>> {
         let bincode_config = self.bincode_config();
         let msg = ready!(self.channel.poll_recv(cx))?;
         Poll::Ready(Ok(bincode_config.deserialize(msg)?))
@@ -189,38 +189,38 @@ where
 }
 
 /// Wrapper over an `UnreliableBincodeChannel` that only allows a single message type.
-pub struct UnreliableTypedChannel<R, P, T>
+pub struct UnreliableTypedChannel<T, P, M>
 where
-    R: Runtime,
+    T: Timer,
     P: PacketPool,
 {
-    channel: UnreliableBincodeChannel<R, P>,
-    _phantom: PhantomData<T>,
+    channel: UnreliableBincodeChannel<T, P>,
+    _phantom: PhantomData<M>,
 }
 
-impl<R, P, T> From<UnreliableChannel<R, P>> for UnreliableTypedChannel<R, P, T>
+impl<T, P, M> From<UnreliableChannel<T, P>> for UnreliableTypedChannel<T, P, M>
 where
-    R: Runtime,
+    T: Timer,
     P: PacketPool,
 {
-    fn from(channel: UnreliableChannel<R, P>) -> Self {
+    fn from(channel: UnreliableChannel<T, P>) -> Self {
         Self::new(channel)
     }
 }
 
-impl<R, P, T> UnreliableTypedChannel<R, P, T>
+impl<T, P, M> UnreliableTypedChannel<T, P, M>
 where
-    R: Runtime,
+    T: Timer,
     P: PacketPool,
 {
-    pub fn new(channel: UnreliableChannel<R, P>) -> Self {
+    pub fn new(channel: UnreliableChannel<T, P>) -> Self {
         Self {
             channel: UnreliableBincodeChannel::new(channel),
             _phantom: PhantomData,
         }
     }
 
-    pub fn into_inner(self) -> UnreliableChannel<R, P> {
+    pub fn into_inner(self) -> UnreliableChannel<T, P> {
         self.channel.into_inner()
     }
 
@@ -251,40 +251,40 @@ where
     }
 }
 
-impl<R, P, T> UnreliableTypedChannel<R, P, T>
+impl<T, P, M> UnreliableTypedChannel<T, P, M>
 where
-    R: Runtime,
+    T: Timer,
     P: PacketPool,
-    T: Serialize,
+    M: Serialize,
 {
-    pub async fn send(&mut self, msg: &T) -> Result<(), SendError> {
+    pub async fn send(&mut self, msg: &M) -> Result<(), SendError> {
         self.channel.send(msg).await
     }
 
-    pub fn try_send(&mut self, msg: &T) -> Result<bool, SendError> {
+    pub fn try_send(&mut self, msg: &M) -> Result<bool, SendError> {
         self.channel.try_send(msg)
     }
 
-    pub fn start_send(&mut self, msg: &T) -> Result<(), bincode::Error> {
+    pub fn start_send(&mut self, msg: &M) -> Result<(), bincode::Error> {
         self.channel.start_send(msg)
     }
 }
 
-impl<'a, R, P, T> UnreliableTypedChannel<R, P, T>
+impl<'a, T, P, M> UnreliableTypedChannel<T, P, M>
 where
-    R: Runtime,
+    T: Timer,
     P: PacketPool,
-    T: Deserialize<'a>,
+    M: Deserialize<'a>,
 {
-    pub async fn recv(&'a mut self) -> Result<T, RecvError> {
+    pub async fn recv(&'a mut self) -> Result<M, RecvError> {
         self.channel.recv().await
     }
 
-    pub fn try_recv(&'a mut self) -> Result<Option<T>, RecvError> {
+    pub fn try_recv(&'a mut self) -> Result<Option<M>, RecvError> {
         self.channel.try_recv()
     }
 
-    pub fn poll_recv(&'a mut self, cx: &mut Context) -> Poll<Result<T, RecvError>> {
+    pub fn poll_recv(&'a mut self, cx: &mut Context) -> Poll<Result<M, RecvError>> {
         self.channel.poll_recv(cx)
     }
 }
