@@ -133,7 +133,8 @@ impl CompressedBincodeChannel {
     /// This method is cancel safe, it will never partially receive a message and will never drop a
     /// received message.
     pub async fn recv<M: DeserializeOwned>(&mut self) -> Result<M, RecvError> {
-        future::poll_fn(|cx| self.poll_recv::<M>(cx)).await
+        future::poll_fn(|cx| self.poll_recv_ready(cx)).await?;
+        Ok(self.recv_next()?)
     }
 
     pub fn try_recv<M: DeserializeOwned>(&mut self) -> Result<Option<M>, RecvError> {
@@ -172,14 +173,14 @@ impl CompressedBincodeChannel {
         &mut self,
         cx: &mut Context,
     ) -> Poll<Result<M, RecvError>> {
-        let bincode_config = self.bincode_config();
+        ready!(self.poll_recv_ready(cx))?;
+        Poll::Ready(Ok(self.recv_next::<M>()?))
+    }
 
+    fn poll_recv_ready(&mut self, cx: &mut Context) -> Poll<Result<(), RecvError>> {
         loop {
             if self.recv_pos < self.recv_chunk.len() {
-                let mut reader = &self.recv_chunk[self.recv_pos..];
-                let msg = bincode_config.deserialize_from(&mut reader)?;
-                self.recv_pos = self.recv_chunk.len() - reader.len();
-                return Poll::Ready(Ok(msg));
+                return Poll::Ready(Ok(()));
             }
 
             if self.read_pos < 3 {
@@ -194,7 +195,8 @@ impl CompressedBincodeChannel {
 
             if compressed {
                 let decompressed_len = decompress_len(&self.read_buffer[3..])?;
-                self.recv_chunk.resize(decompressed_len, 0);
+                self.recv_chunk
+                    .resize(decompressed_len.min(MAX_MESSAGE_LEN as usize), 0);
                 self.decoder
                     .decompress(&self.read_buffer[3..], &mut self.recv_chunk)?;
             } else {
@@ -205,6 +207,14 @@ impl CompressedBincodeChannel {
             self.recv_pos = 0;
             self.read_pos = 0;
         }
+    }
+
+    fn recv_next<M: DeserializeOwned>(&mut self) -> Result<M, bincode::Error> {
+        let bincode_config = self.bincode_config();
+        let mut reader = &self.recv_chunk[self.recv_pos..];
+        let msg = bincode_config.deserialize_from(&mut reader)?;
+        self.recv_pos = self.recv_chunk.len() - reader.len();
+        Ok(msg)
     }
 
     fn poll_write_send_chunk(
