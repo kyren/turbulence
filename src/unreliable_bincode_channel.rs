@@ -130,9 +130,9 @@ where
     }
 
     pub fn try_recv<'a, M: Deserialize<'a>>(&'a mut self) -> Result<Option<M>, RecvError> {
-        match self.poll_recv(&mut Context::from_waker(task::noop_waker_ref())) {
+        match self.poll_recv::<M>(&mut Context::from_waker(task::noop_waker_ref())) {
             Poll::Pending => Ok(None),
-            Poll::Ready(Ok(val)) => Ok(val),
+            Poll::Ready(Ok(val)) => Ok(Some(val)),
             Poll::Ready(Err(err)) => Err(err),
         }
     }
@@ -180,7 +180,7 @@ where
     ) -> Poll<Result<M, RecvError>> {
         let bincode_config = self.bincode_config();
         let msg = ready!(self.channel.poll_recv(cx))?;
-        Poll::Ready(Ok(bincode_config.deserialize(msg)?))
+        Poll::Ready(Ok(bincode_config.deserialize::<M>(msg)?))
     }
 
     fn bincode_config(&self) -> impl bincode::Options + Copy {
@@ -277,14 +277,14 @@ where
     M: Deserialize<'a>,
 {
     pub async fn recv(&'a mut self) -> Result<M, RecvError> {
-        self.channel.recv().await
+        self.channel.recv::<M>().await
     }
 
     pub fn try_recv(&'a mut self) -> Result<Option<M>, RecvError> {
-        self.channel.try_recv()
+        self.channel.try_recv::<M>()
     }
 
     pub fn poll_recv(&'a mut self, cx: &mut Context) -> Poll<Result<M, RecvError>> {
-        self.channel.poll_recv(cx)
+        self.channel.poll_recv::<M>(cx)
     }
 }

@@ -133,11 +133,11 @@ impl CompressedBincodeChannel {
     /// This method is cancel safe, it will never partially receive a message and will never drop a
     /// received message.
     pub async fn recv<M: DeserializeOwned>(&mut self) -> Result<M, RecvError> {
-        future::poll_fn(|cx| self.poll_recv(cx)).await
+        future::poll_fn(|cx| self.poll_recv::<M>(cx)).await
     }
 
     pub fn try_recv<M: DeserializeOwned>(&mut self) -> Result<Option<M>, RecvError> {
-        match self.poll_recv(&mut Context::from_waker(task::noop_waker_ref())) {
+        match self.poll_recv::<M>(&mut Context::from_waker(task::noop_waker_ref())) {
             Poll::Pending => Ok(None),
             Poll::Ready(Ok(val)) => Ok(Some(val)),
             Poll::Ready(Err(err)) => Err(err),
@@ -327,14 +327,14 @@ impl<M: Serialize> CompressedTypedChannel<M> {
 
 impl<M: DeserializeOwned> CompressedTypedChannel<M> {
     pub async fn recv(&mut self) -> Result<M, RecvError> {
-        self.channel.recv().await
+        self.channel.recv::<M>().await
     }
 
     pub fn try_recv(&mut self) -> Result<Option<M>, RecvError> {
-        self.channel.try_recv()
+        self.channel.try_recv::<M>()
     }
 
     pub fn poll_recv(&mut self, cx: &mut Context) -> Poll<Result<M, RecvError>> {
-        self.channel.poll_recv(cx)
+        self.channel.poll_recv::<M>(cx)
     }
 }

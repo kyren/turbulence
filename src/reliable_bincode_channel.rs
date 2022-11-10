@@ -116,11 +116,11 @@ impl ReliableBincodeChannel {
     /// messages.
     pub async fn recv<'a, M: Deserialize<'a>>(&'a mut self) -> Result<M, RecvError> {
         future::poll_fn(|cx| self.poll_recv_ready(cx)).await?;
-        self.recv_next()
+        self.recv_next::<M>()
     }
 
     pub fn try_recv<'a, M: Deserialize<'a>>(&'a mut self) -> Result<Option<M>, RecvError> {
-        match self.poll_recv(&mut Context::from_waker(task::noop_waker_ref())) {
+        match self.poll_recv::<M>(&mut Context::from_waker(task::noop_waker_ref())) {
             Poll::Pending => Ok(None),
             Poll::Ready(Ok(val)) => Ok(Some(val)),
             Poll::Ready(Err(err)) => Err(err),
@@ -176,7 +176,7 @@ impl ReliableBincodeChannel {
         cx: &mut Context,
     ) -> Poll<Result<M, RecvError>> {
         ready!(self.poll_recv_ready(cx))?;
-        Poll::Ready(self.recv_next())
+        Poll::Ready(self.recv_next::<M>())
     }
 
     fn poll_recv_ready(&mut self, cx: &mut Context) -> Poll<Result<(), RecvError>> {
@@ -278,14 +278,14 @@ impl<M: Serialize> ReliableTypedChannel<M> {
 
 impl<'a, M: Deserialize<'a>> ReliableTypedChannel<M> {
     pub async fn recv(&'a mut self) -> Result<M, RecvError> {
-        self.channel.recv().await
+        self.channel.recv::<M>().await
     }
 
     pub fn try_recv(&'a mut self) -> Result<Option<M>, RecvError> {
-        self.channel.try_recv()
+        self.channel.try_recv::<M>()
     }
 
     pub fn poll_recv(&'a mut self, cx: &mut Context) -> Poll<Result<M, RecvError>> {
-        self.channel.poll_recv(cx)
+        self.channel.poll_recv::<M>(cx)
     }
 }
