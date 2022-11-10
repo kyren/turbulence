@@ -328,28 +328,24 @@ where
                 }
                 .fuse();
 
-                let timer = &self.timer;
-                let shared = &self.shared;
-                let send_window = &mut self.send_window;
-                let remote_recv_available = self.remote_recv_available;
-                let send_available = async move {
-                    if remote_recv_available == 0 {
+                let send_available = async {
+                    if self.remote_recv_available == 0 {
                         // Don't wake up at all for sending new data if we couldn't send anything
                         // anyway.
                         future::pending::<()>().await;
                     }
 
                     // Don't wake up for sending new data until we have bandwidth available.
-                    if let Some(delay) = bandwidth_limiter.delay_until_available(timer) {
+                    if let Some(delay) = bandwidth_limiter.delay_until_available(&self.timer) {
                         delay.await;
                     }
 
                     future::poll_fn(|cx| {
-                        if send_window.send_available() > 0 {
+                        if self.send_window.send_available() > 0 {
                             Poll::Ready(())
                         } else {
-                            shared.send_ready.register(cx.waker());
-                            if send_window.send_available() > 0 {
+                            self.shared.send_ready.register(cx.waker());
+                            if self.send_window.send_available() > 0 {
                                 Poll::Ready(())
                             } else {
                                 Poll::Pending
