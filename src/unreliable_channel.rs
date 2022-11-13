@@ -27,7 +27,7 @@ pub enum SendError {
     #[error(transparent)]
     Disconnected(#[from] Disconnected),
     /// Non-fatal error, message is unsent.
-    #[error("sent message is larger than the maximum packet size")]
+    #[error("message is larger than fits in the maximum packet size")]
     TooBig,
 }
 
@@ -161,7 +161,23 @@ where
     }
 
     pub fn poll_send(&mut self, cx: &mut Context, msg: &[u8]) -> Poll<Result<(), SendError>> {
-        let msg_len: u16 = msg.len().try_into().map_err(|_| SendError::TooBig)?;
+        ready!(self.poll_send_ready(cx, msg.len()))?;
+        let mut send = self.start_send();
+        send.buffer()[0..msg.len()].copy_from_slice(msg);
+        send.finish(msg.len());
+        Poll::Ready(Ok(()))
+    }
+
+    /// Wait until we can send at least a `msg_len` length message via `start_send`.
+    ///
+    /// The available message length may be more than requested, if `msg_len` is zero, then this
+    /// will return as soon as a message of any length can be sent.
+    pub fn poll_send_ready(
+        &mut self,
+        cx: &mut Context,
+        msg_len: usize,
+    ) -> Poll<Result<(), SendError>> {
+        let msg_len: u16 = msg_len.try_into().map_err(|_| SendError::TooBig)?;
 
         let start = self.out_packet.len();
         if self.packet_pool.capacity() - start < msg_len as usize + 2 {
@@ -172,12 +188,15 @@ where
             }
         }
 
-        let mut len = [0; 2];
-        LittleEndian::write_u16(&mut len, msg_len);
-        self.out_packet.extend(&len);
-        self.out_packet.extend(&msg);
-
         Poll::Ready(Ok(()))
+    }
+
+    /// Start sending a message up to the maximum remaining available message length.
+    ///
+    /// # Panics
+    /// May panic if called without `poll_send_ready` being returned for some message length.
+    pub fn start_send(&mut self) -> StartSend<P::Packet> {
+        StartSend::new(&mut self.out_packet, self.packet_pool.capacity())
     }
 
     pub fn poll_flush(&mut self, cx: &mut Context) -> Poll<Result<(), Disconnected>> {
@@ -248,5 +267,46 @@ where
         *in_pos += length;
 
         Ok(msg)
+    }
+}
+
+pub struct StartSend<'a, P> {
+    packet: &'a mut P,
+    start: usize,
+    capacity: usize,
+}
+
+impl<'a, P: Packet> StartSend<'a, P> {
+    fn new(packet: &'a mut P, capacity: usize) -> Self {
+        assert!(
+            capacity >= packet.len() + 2,
+            "not enough room to write size header"
+        );
+        let start = packet.len();
+        packet.resize(capacity, 0);
+        Self {
+            packet,
+            start,
+            capacity,
+        }
+    }
+
+    /// Returns the buffer to write the outgoing message into.
+    pub fn buffer(&mut self) -> &mut [u8] {
+        &mut self.packet[self.start + 2..]
+    }
+
+    /// Finish writing a message that has been written into the provided buffer.
+    ///
+    /// # Panics
+    /// Panics if called with a message length larger than the size of the provided buffer.
+    pub fn finish(self, msg_len: usize) {
+        assert!(
+            msg_len < self.capacity - self.start - 2,
+            "cannot send packet greater than size of provided buffer"
+        );
+        let msg_len: u16 = msg_len.try_into().unwrap();
+        LittleEndian::write_u16(&mut self.packet[self.start..self.start + 2], msg_len);
+        self.packet.truncate(self.start + msg_len as usize + 2);
     }
 }
