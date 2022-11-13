@@ -413,7 +413,7 @@ impl RecvWindow {
             } else {
                 let start = self.unready[insert_pos].0;
                 for i in insert_pos..self.unready.len() {
-                    if stream_lt(end_pos, self.unready[i].0) {
+                    if i > insert_pos && stream_lt(end_pos, self.unready[i].0) {
                         self.unready.drain(insert_pos + 1..i);
                         self.unready[insert_pos].0 = if stream_lt(start_pos, start) {
                             start_pos
