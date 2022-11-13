@@ -408,21 +408,21 @@ impl RecvWindow {
 
             if insert_pos == self.unready.len() {
                 self.unready.push((start_pos, end_pos));
-            } else if stream_lt(end_pos, self.unready[insert_pos].0) {
-                self.unready.insert(insert_pos, (start_pos, end_pos));
             } else {
-                let start = self.unready[insert_pos].0;
                 for i in insert_pos..self.unready.len() {
-                    if i > insert_pos && stream_lt(end_pos, self.unready[i].0) {
-                        self.unready.drain(insert_pos + 1..i);
-                        self.unready[insert_pos].0 = if stream_lt(start_pos, start) {
-                            start_pos
+                    if stream_lt(end_pos, self.unready[i].0) {
+                        if i == insert_pos {
+                            self.unready.insert(insert_pos, (start_pos, end_pos));
                         } else {
-                            start
-                        };
-                        self.unready[insert_pos].1 = end_pos;
+                            self.unready.drain(insert_pos + 1..i);
+                            if stream_lt(start_pos, self.unready[insert_pos].0) {
+                                self.unready[insert_pos].0 = start_pos;
+                            }
+                            self.unready[insert_pos].1 = end_pos;
+                        }
                         break;
                     } else if stream_lt(end_pos, self.unready[i].1) || i == self.unready.len() - 1 {
+                        let start = self.unready[insert_pos].0;
                         self.unready.drain(insert_pos..i);
                         self.unready[insert_pos].0 = if stream_lt(start_pos, start) {
                             start_pos
