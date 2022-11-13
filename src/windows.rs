@@ -15,48 +15,36 @@ pub type StreamPos = Wrapping<u32>;
 /// are exactly opposite each other), there is no sensible wrapping order for `a` and `b`. In
 /// order use `stream_cmp` sensibly, we must ensure that `StreamPos` values can never be more than
 /// `u32::MAX / 2` (or 2^31 - 1) apart.
-pub fn stream_cmp(a: StreamPos, b: StreamPos) -> Ordering {
+pub fn stream_cmp(a: StreamPos, b: StreamPos) -> Option<Ordering> {
     let ord = (b - a).cmp(&(a - b));
-    // Assert that it is not valid to try to compare values exactly 2^31 apart.
-    debug_assert!(ord != Ordering::Equal || a == b);
-    ord
+    if ord == Ordering::Equal && a != b {
+        None
+    } else {
+        Some(ord)
+    }
 }
 
 pub fn stream_lt(a: StreamPos, b: StreamPos) -> bool {
-    stream_cmp(a, b) == Ordering::Less
+    stream_cmp(a, b).map(Ordering::is_lt).unwrap_or(false)
+}
+
+pub fn stream_le(a: StreamPos, b: StreamPos) -> bool {
+    stream_cmp(a, b).map(Ordering::is_le).unwrap_or(false)
 }
 
 pub fn stream_gt(a: StreamPos, b: StreamPos) -> bool {
-    stream_cmp(a, b) == Ordering::Greater
+    stream_cmp(a, b).map(Ordering::is_gt).unwrap_or(false)
 }
 
 pub fn stream_ge(a: StreamPos, b: StreamPos) -> bool {
-    stream_cmp(a, b) != Ordering::Less
-}
-
-pub fn stream_min(a: StreamPos, b: StreamPos) -> StreamPos {
-    if stream_lt(a, b) {
-        a
-    } else {
-        b
-    }
-}
-
-pub fn stream_max(a: StreamPos, b: StreamPos) -> StreamPos {
-    if stream_gt(a, b) {
-        a
-    } else {
-        b
-    }
+    stream_cmp(a, b).map(Ordering::is_ge).unwrap_or(false)
 }
 
 #[derive(Debug, Eq, PartialEq)]
 pub enum AckResult {
-    /// This range was not found
+    /// This range was not found or acked more than was sent.
     NotFound,
-    /// This range acked more than was sent
-    InvalidRange,
-    /// This range was fully acked
+    /// This range was fully acked.
     Ack,
     /// This range was a partial ack of a previously sent range, and the range from the end of the
     /// provided range to this stream position should be considered nacked.
@@ -179,13 +167,27 @@ impl SendWindow {
     /// *must* start with the same stream position. Acked ranges will be ignored if they are empty
     /// or do not start with the same position as a previously sent, unacked range.
     pub fn ack_range(&mut self, start: StreamPos, end: StreamPos) -> AckResult {
+        if self.unacked_ranges.is_empty() {
+            return AckResult::NotFound;
+        }
+
+        if !stream_lt(start, end) {
+            return AckResult::NotFound;
+        }
+
+        if !stream_ge(start, self.unacked_ranges.first().unwrap().0)
+            || !stream_le(end, self.unacked_ranges.last().unwrap().1)
+        {
+            return AckResult::NotFound;
+        }
+
         match self
             .unacked_ranges
-            .binary_search_by(|(range_start, _)| stream_cmp(*range_start, start))
+            .binary_search_by(|(range_start, _)| stream_cmp(*range_start, start).unwrap())
         {
             Ok(i) => {
                 if stream_gt(end, self.unacked_ranges[i].1) {
-                    AckResult::InvalidRange
+                    AckResult::NotFound
                 } else {
                     let unacked_start = self.unacked_start();
                     if end == self.unacked_ranges[i].1 {
@@ -312,7 +314,7 @@ impl RecvWindow {
         // If stream positions were strictly ordered this would not be necessary, but this check
         // combined with the assertions that `data.len() <= u32::MAX / 2` and `self.capacity <=
         // u32::MAX / 2` should prevent wrapping issues.
-        if stream_gt(start_pos, recv_end_pos) {
+        if !stream_lt(start_pos, recv_end_pos) {
             return None;
         }
 
@@ -371,7 +373,7 @@ impl RecvWindow {
 
             let pos = match self
                 .unready
-                .binary_search_by(|(_, end)| stream_cmp(*end, end_pos))
+                .binary_search_by(|(_, end)| stream_cmp(*end, end_pos).unwrap())
             {
                 Ok(i) => i,
                 Err(i) => i,
@@ -398,7 +400,7 @@ impl RecvWindow {
 
             let insert_pos = match self
                 .unready
-                .binary_search_by(|(_, end)| stream_cmp(*end, start_pos))
+                .binary_search_by(|(_, end)| stream_cmp(*end, start_pos).unwrap())
             {
                 Ok(i) => i,
                 Err(i) => i,
@@ -413,14 +415,23 @@ impl RecvWindow {
                 for i in insert_pos..self.unready.len() {
                     if stream_lt(end_pos, self.unready[i].0) {
                         self.unready.drain(insert_pos + 1..i);
-                        self.unready[insert_pos].0 = stream_min(start, start_pos);
+                        self.unready[insert_pos].0 = if stream_lt(start_pos, start) {
+                            start_pos
+                        } else {
+                            start
+                        };
                         self.unready[insert_pos].1 = end_pos;
                         break;
                     } else if stream_lt(end_pos, self.unready[i].1) || i == self.unready.len() - 1 {
                         self.unready.drain(insert_pos..i);
-                        self.unready[insert_pos].0 = stream_min(start, start_pos);
-                        self.unready[insert_pos].1 =
-                            stream_max(self.unready[insert_pos].1, end_pos);
+                        self.unready[insert_pos].0 = if stream_lt(start_pos, start) {
+                            start_pos
+                        } else {
+                            start
+                        };
+                        if stream_gt(end_pos, self.unready[insert_pos].1) {
+                            self.unready[insert_pos].1 = end_pos;
+                        }
                         break;
                     }
                 }
@@ -518,7 +529,7 @@ mod tests {
         );
         assert_eq!(
             send_window.ack_range(stream_start + Wrapping(11), stream_start + Wrapping(15)),
-            AckResult::InvalidRange
+            AckResult::NotFound
         );
 
         assert_eq!(

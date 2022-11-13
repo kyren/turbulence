@@ -516,9 +516,6 @@ where
 
             let acked_range = match self.send_window.ack_range(start_pos, end_pos) {
                 AckResult::NotFound => None,
-                AckResult::InvalidRange => {
-                    return Err(Error::ProtocolError);
-                }
                 AckResult::Ack => {
                     let acked = self.unacked_ranges.remove(&start_pos).unwrap();
                     assert_eq!(acked.end, end_pos);
