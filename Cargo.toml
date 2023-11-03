@@ -13,6 +13,10 @@ license = "MIT OR Apache-2.0"
 [badges]
 circle-ci = { repository = "kyren/turbulence", branch = "master" }
 
+[[bench]]
+name = "unreliable"
+harness = false
+
 [dependencies]
 bincode = "1.3"
 byteorder = "1.3"
@@ -27,3 +31,5 @@ thiserror = "1.0"
 [dev-dependencies]
 rand = { version = "0.8", features = ["small_rng"] }
 serde = { version = "1.0", features = ["derive"] }
+criterion = "0.3.3"
+smol = "1.2.4"
